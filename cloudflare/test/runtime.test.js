@@ -45,6 +45,9 @@ test('real Workers runtime: passkeys, first admin, sessions, large state, confli
   const saved = await req('PUT', '/api/data', { state, baseRev: 0 }, admin.cookie);
   assert.equal(saved.status, 200);
   assert.equal(saved.body.rev, 1);
+  assert.equal((await req('GET', '/api/data', undefined, ordinary.cookie)).body.state, null);
+  const oversized = await req('PUT', '/api/data', { state: { futureField: 'x'.repeat(5 * 1024 * 1024) } }, admin.cookie);
+  assert.equal(oversized.status, 413);
   const attempts = await Promise.all(['one','two'].map(value => req('PUT', '/api/data', {
     state: { workouts: [], routines: [], winner: value }, baseRev: 1, baseWid: saved.body.wid
   }, admin.cookie)));
@@ -65,4 +68,10 @@ test('real Workers runtime: passkeys, first admin, sessions, large state, confli
   assert.equal(login.body.user.id, admin.body.user.id);
   const exported = await req('GET', '/api/admin/user?id=' + admin.body.user.id, undefined, login.cookie);
   assert.equal(exported.status, 200);
+  assert.equal((await req('POST', '/api/logout/all', {}, login.cookie)).status, 200);
+  await mf.dispose();
+  mf = new Miniflare(convertV4MiniflareOptions(options));
+  assert.equal((await req('GET', '/api/data', undefined, admin.cookie)).status, 401);
+  assert.equal((await req('GET', '/api/data', undefined, login.cookie)).status, 401);
+  assert.equal((await req('GET', '/api/data', undefined, ordinary.cookie)).status, 200);
 });
