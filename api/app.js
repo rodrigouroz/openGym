@@ -32,8 +32,11 @@ import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
 // The runtime owns persistence and optional background services. Docker supplies the
 // existing filesystem and Coach; a Worker supplies durable synchronous document storage.
 export function createApiServer({ fs, durableWrite, env = process.env, coachConfig, coachJobs,
-  coachRoutes, startCadence, startWarmup, background = true }) {
-const setInterval = background ? globalThis.setInterval : () => ({ unref() {} });
+  coachRoutes, startCadence, startWarmup, background = true, mediaStorage = {}, pushTransport = webpush, checkPushEndpoint = () => null, durableRestTimers }) {
+const backgroundTasks = [];
+const setInterval = background ? globalThis.setInterval : (fn, ms) => {
+  backgroundTasks.push({ fn, ms, last: 0 }); return { unref() {} };
+};
 const DATA = env.DATA_DIR || '/data';
 const RP_ID = env.RP_ID || 'localhost';
 const ORIGIN = env.ORIGIN || 'http://localhost:8080';
@@ -330,7 +333,7 @@ function pushEndpointError(raw) {
   if (/^[0-9.]+$/.test(host) || host.includes(':')) {
     if (isPrivateAddr(host)) return 'endpoint must not point at a private address';
   }
-  return null;
+  return checkPushEndpoint(raw);
 }
 
 // `deviceId` narrows the send to the subscriptions one browser registered (the rest-timer alert
@@ -338,7 +341,13 @@ function pushEndpointError(raw) {
 // older client) still gets everything, as before. A resting device with no subscription of its
 // own gets nothing: the phone in the bag must not ring for a rest timed on the desktop. The
 // client re-sends its subscription with its id on every boot, so an id that changed heals there.
-async function sendPush(userId, payload, deviceId) {
+const pendingPushes = new Set();
+function sendPush(...args) {
+  const p = sendPushImpl(...args); pendingPushes.add(p);
+  p.then(() => pendingPushes.delete(p), () => pendingPushes.delete(p));
+  return p;
+}
+async function sendPushImpl(userId, payload, deviceId) {
   let subs = db.subs.filter(s => s.userId === userId);
   if (deviceId) subs = subs.filter(s => !s.deviceId || s.deviceId === deviceId);
   if (!subs.length) return;
@@ -362,8 +371,9 @@ async function sendPush(userId, payload, deviceId) {
       // rather than risking it being dropped for the sake of shaving off latency that TTL doesn't
       // actually control anyway.
       try {
-        await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, body,
-          { urgency: 'high', timeout: PUSH_TIMEOUT_MS, agent: PUSH_AGENT });
+        await pushTransport.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, body,
+          { urgency: 'high', timeout: PUSH_TIMEOUT_MS, agent: PUSH_AGENT,
+            vapidDetails: { subject: VAPID_SUBJECT, ...vapid } });
       } catch (e) {
         console.error('push send failed', userId, e.statusCode, e.body || e.message);
         // 404/410: the push service says the subscription is gone. 403: it refuses our VAPID
@@ -395,6 +405,7 @@ async function sendPush(userId, payload, deviceId) {
 const restTimers = new Map(); // `${userId}:${deviceId}` -> Timeout
 const restKey = (userId, deviceId) => `${userId}:${deviceId || ''}`;
 function scheduleRestTimer(userId, deviceId, sec, lang) {
+  if (durableRestTimers) return durableRestTimers.schedule(userId, deviceId, sec, lang);
   const k = restKey(userId, deviceId);
   const t = restTimers.get(k);
   if (t) clearTimeout(t);
@@ -404,6 +415,7 @@ function scheduleRestTimer(userId, deviceId, sec, lang) {
   }, sec * 1000));
 }
 function cancelRestTimer(userId, deviceId) {
+  if (durableRestTimers) return durableRestTimers.cancel(userId, deviceId);
   // no device id: an older client — clear everything the account has pending, as it always did
   for (const [k, t] of restTimers) {
     if (deviceId ? k === restKey(userId, deviceId) : k.startsWith(userId + ':')) { clearTimeout(t); restTimers.delete(k); }
@@ -1755,7 +1767,7 @@ const passkeyRoutes = {
 // either way: an admin deleting a profile must still remove files uploaded while it was on.
 const MEDIA_LIMITS = mediaLimits(env);
 const MEDIA_ON = MEDIA_LIMITS.enabled;
-const MEDIA = createMediaStore({ dir: path.join(DATA, 'uploads'), limits: MEDIA_LIMITS, readState });
+const MEDIA = createMediaStore({ dir: path.join(DATA, 'uploads'), limits: MEDIA_LIMITS, readState, ...mediaStorage });
 // Leftovers of uploads the previous process was receiving when it stopped.
 try { MEDIA.cleanTmp(); } catch (e) { console.error('media: boot cleanup failed', e.message); }
 // Per profile, not per address: every upload is signed in, and behind a proxy one address can be
@@ -1792,7 +1804,7 @@ function mediaSweepAll() {
 }
 if (MEDIA_ON) {
   setInterval(mediaSweepAll, 3600000).unref();
-  setTimeout(mediaSweepAll, 5 * 60000).unref();
+  if (background) setTimeout(mediaSweepAll, 5 * 60000).unref();
 }
 
 // A stored file, streamed. The headers are the point: the bytes were chosen by a user, so the
@@ -2703,5 +2715,12 @@ server.headersTimeout = 60000;
 // port that was actually bound: with PORT=0 the OS picks one, and a caller that did not choose it
 // (the tests spawn the server that way, and so does anyone running two instances on one box) has
 // no other way to learn it.
+server.backgroundTick = async () => {
+  for (const task of backgroundTasks) if (Date.now() - task.last >= task.ms) { task.last = Date.now(); await task.fn(); }
+  await Promise.allSettled([...pendingPushes]);
+};
+server.hasSubscriptions = () => db.subs.length > 0;
+server.sendRestAlert = (uid, device, lang) => sendPush(uid, restTimerPush(lang), device);
+server.drainPushes = () => Promise.allSettled([...pendingPushes]);
 return server;
 }

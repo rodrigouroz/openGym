@@ -792,3 +792,17 @@ describe('AdminCoach — readiness and the step count', () => {
     expect(btn('Add API key')).toBeTruthy()
   })
 })
+
+
+it('offers a server binding provider without a credential step', async () => {
+  mocks.routes['/api/admin/coach'] = status({
+    provider: 'workers-ai', auth: { state: 'not-required' },
+    providers: [...PROVIDERS, { id: 'workers-ai', label: 'Workers AI', binding: true }],
+  })
+  await mount()
+  expect(chip('Workers AI')).toBeTruthy()
+  await tap(chip('Workers AI'))
+  expect(sent('/api/admin/coach/config').at(-1).body).toEqual({ provider: 'workers-ai' })
+  expect(btn('Add API key')).toBeUndefined()
+  expect(host.textContent).toContain('No API key is needed')
+})

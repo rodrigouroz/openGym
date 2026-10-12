@@ -136,6 +136,7 @@ export default function AdminCoach() {
 
   // Chips, grouped.
   const groups = [
+    { title: 'Included with this server', hint: 'Uses the server’s AI service. No API key is needed; the server owner controls its usage allowance.', items: d.providers.filter(p => p.binding) },
     { title: 'Paste an API key', hint: 'Plain HTTPS to the provider. Works on the default api image, nothing extra to install.', items: d.providers.filter(p => p.http) },
     { title: 'Runs a local AI runtime', hint: 'Needs the bigger api image built with --target coach.', items: d.providers.filter(p => RUNTIME_IDS.includes(p.id)) },
     { title: 'Testing', hint: 'A built-in fake that answers instantly, so the whole loop can be tried without an account.', items: d.providers.filter(p => TESTING_IDS.includes(p.id)) }

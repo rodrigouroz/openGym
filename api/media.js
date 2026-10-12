@@ -24,9 +24,9 @@
  *   is in the caller's own folder, so there is no way to learn whether someone else has a file.
  */
 import crypto from 'node:crypto';
-import fs from 'node:fs';
+import nodeFs from 'node:fs';
 import path from 'node:path';
-import { syncDir, syncFile } from './durable.js';
+import { syncDir as nodeSyncDir, syncFile as nodeSyncFile } from './durable.js';
 
 export const HASH_RE = /^[0-9a-f]{64}$/;
 const MB = 1024 * 1024;          // every *_MB setting means MiB; the client uses the same unit
@@ -177,15 +177,15 @@ export function sniffMedia(head) {
 
 /* ---------------------------------------------------------------- MP4 / MOV */
 
-function readAt(fd, pos, len) {
+function readAt(fd, pos, len, fs) {
   const buf = Buffer.alloc(len);
   return fs.readSync(fd, buf, 0, len, pos) === len ? buf : null;
 }
 // The box whose header starts at `pos`, which must end by `end`. size 1 = a 64-bit size follows,
 // size 0 = the box runs to `end`. Anything that would reach outside its parent is a broken file.
-function boxAt(fd, pos, end) {
+function boxAt(fd, pos, end, fs) {
   if (end - pos < 8) return null;
-  const h = readAt(fd, pos, Math.min(16, end - pos));
+  const h = readAt(fd, pos, Math.min(16, end - pos), fs);
   if (!h) return null;
   let size = h.readUInt32BE(0);
   let headerLen = 8;
@@ -211,16 +211,16 @@ const unknownDur = (d, version) => d === 0 || d === (version === 1 ? Number.MAX_
  * anything that is not a well-formed file: no ftyp first, no moov, no mvhd, a zero timescale, a
  * box that overruns its parent, more than 10k boxes, or a moov over 8 MB.
  */
-export function mp4Info(fd, size) {
+export function mp4Info(fd, size, fs = nodeFs) {
   try {
     let pos = 0, count = 0, brand = null, moov = null;
     while (pos < size) {
       if (++count > MAX_BOXES) return null;
-      const b = boxAt(fd, pos, size);
+      const b = boxAt(fd, pos, size, fs);
       if (!b) return null;
       if (count === 1) {
         if (b.type !== 'ftyp' || b.bodyLen < 4) return null;
-        brand = readAt(fd, b.body, 4).toString('latin1');
+        brand = readAt(fd, b.body, 4, fs).toString('latin1');
       }
       if (b.type === 'moov') { moov = b; break; }
       pos = b.end;
@@ -230,11 +230,11 @@ export function mp4Info(fd, size) {
     pos = moov.body;
     while (pos < moov.end) {
       if (++count > MAX_BOXES) return null;
-      const b = boxAt(fd, pos, moov.end);
+      const b = boxAt(fd, pos, moov.end, fs);
       if (!b) return null;
       if (b.type === 'mvhd' && !sawMvhd) {
         sawMvhd = true;
-        const v = readAt(fd, b.body, Math.min(b.bodyLen, 32));
+        const v = readAt(fd, b.body, Math.min(b.bodyLen, 32), fs);
         if (!v || v.length < 20) return null;
         if (v[0] === 1) {
           if (v.length < 32) return null;
@@ -252,10 +252,10 @@ export function mp4Info(fd, size) {
         let p = b.body;
         while (p < b.end) {
           if (++count > MAX_BOXES) return null;
-          const c = boxAt(fd, p, b.end);
+          const c = boxAt(fd, p, b.end, fs);
           if (!c) return null;
           if (c.type === 'mehd') {
-            const v = readAt(fd, c.body, Math.min(c.bodyLen, 12));
+            const v = readAt(fd, c.body, Math.min(c.bodyLen, 12), fs);
             if (v && v.length >= 8) {
               const wide = v[0] === 1 && v.length >= 12;
               const d = wide ? u64(v, 4) : v.readUInt32BE(4);
@@ -333,7 +333,7 @@ function drain(req, limit) {
  * On every rejection the write stream has closed before the promise settles, so the caller can
  * unlink the file without racing a late open().
  */
-function streamToFile(req, file, { max, maxMB, idleMs }) {
+function streamToFile(req, file, { max, maxMB, idleMs, fs = nodeFs }) {
   return new Promise((resolve, reject) => {
     const hash = crypto.createHash('sha256');
     const head = [];
@@ -405,7 +405,7 @@ function streamToFile(req, file, { max, maxMB, idleMs }) {
  * profile's stored state, or null when there is none or it does not parse — the store sweeps
  * nobody it gets null for. `now` is injectable so the tests can walk the clock.
  */
-export function createMediaStore({ dir, limits, now = Date.now, readState = () => null, idleMs = 60000, log = console } = {}) {
+export function createMediaStore({ dir, limits, now = Date.now, readState = () => null, idleMs = 60000, log = console, fs = nodeFs, syncDir = nodeSyncDir, syncFile = nodeSyncFile } = {}) {
   const L = { ...mediaLimits({}), ...(limits || {}) };
   const quotaBytes = L.quotaMB > 0 ? Math.round(L.quotaMB * MB) : 0;
   const capMB = kind => (kind === 'video' ? L.videoMB : kind === 'gif' ? L.gifMB : L.imageMB);
@@ -656,7 +656,7 @@ export function createMediaStore({ dir, limits, now = Date.now, readState = () =
       }
 
       tmp = path.join(e.dir, '.tmp', crypto.randomBytes(12).toString('hex'));
-      const got = await streamToFile(req, tmp, { max: cap, maxMB: capMB(declared.kind), idleMs });
+      const got = await streamToFile(req, tmp, { max: cap, maxMB: capMB(declared.kind), idleMs, fs });
 
       if (got.sha !== hash) throw new MediaError(400, 'hash-mismatch');
       const sn = sniffMedia(got.head);
@@ -665,7 +665,7 @@ export function createMediaStore({ dir, limits, now = Date.now, readState = () =
       if (sn.ext === 'mp4' || sn.ext === 'mov') {
         const fd = fs.openSync(tmp, 'r');
         let info;
-        try { info = mp4Info(fd, got.size); } finally { fs.closeSync(fd); }
+        try { info = mp4Info(fd, got.size, fs); } finally { fs.closeSync(fd); }
         if (!info) throw new MediaError(415, 'media-invalid');
         // One second of slack: the client measures with the platform's player, which rounds.
         if (info.durationSec != null && info.durationSec > L.videoSec + 1) throw new MediaError(413, 'media-too-long', { maxSec: L.videoSec });

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -14,7 +15,7 @@ test('real Workers runtime: passkeys, first admin, sessions, large state, confli
     compatibilityDate: '2026-10-12', compatibilityFlags: ['nodejs_compat'],
     durableObjects: { GYM: { className: 'Gym', useSQLite: true } },
     resourcePersistencePath: persist,
-    bindings: { ORIGIN: origin, RP_ID: 'localhost', FIRST_USER_ADMIN: '1', ALLOW_GUEST: '0', TRUST_PROXY: '1' }
+    bindings: { ORIGIN: origin, RP_ID: 'localhost', FIRST_USER_ADMIN: '1', ALLOW_GUEST: '0', TRUST_PROXY: '1', PASSWORD_LOGIN: '1' }
   };
   let mf = new Miniflare(convertV4MiniflareOptions(options));
   t.after(async () => { await mf.dispose(); await rm(persist, { recursive: true, force: true }); });
@@ -74,4 +75,33 @@ test('real Workers runtime: passkeys, first admin, sessions, large state, confli
   assert.equal((await req('GET', '/api/data', undefined, admin.cookie)).status, 401);
   assert.equal((await req('GET', '/api/data', undefined, login.cookie)).status, 401);
   assert.equal((await req('GET', '/api/data', undefined, ordinary.cookie)).status, 200);
+  const password = 'synthetic correct horse battery';
+  const pwUser = await req('POST', '/api/register/password', { name: 'Password fixture', password });
+  assert.equal(pwUser.status, 200, JSON.stringify(pwUser.body));
+  assert.equal((await req('POST', '/api/login/password', { name: 'Password fixture', password: 'wrong password' })).status, 401);
+  await mf.dispose();
+  mf = new Miniflare(convertV4MiniflareOptions(options));
+  const pwLogin = await req('POST', '/api/login/password', { name: 'Password fixture', password });
+  assert.equal(pwLogin.status, 200, JSON.stringify(pwLogin.body));
+  assert.equal(pwLogin.body.user.id, pwUser.body.user.id);
+
+  // Stream a synthetic, signature-valid image across multiple SQLite chunks.
+  const bytes = Buffer.alloc(1200000, 42); Buffer.from('GIF89a').copy(bytes);
+  const hash = crypto.createHash('sha256').update(bytes).digest('hex');
+  const media = await mf.dispatchFetch(origin + '/api/media/' + hash, { method: 'PUT',
+    headers: { Origin: origin, Cookie: pwLogin.cookie, 'Content-Type': 'image/gif' }, body: bytes });
+  assert.equal(media.status, 201, await media.text());
+  const foreign = await mf.dispatchFetch(origin + '/api/media/' + hash, { headers: { Cookie: ordinary.cookie } });
+  assert.equal(foreign.status, 404);
+  await mf.dispose(); mf = new Miniflare(convertV4MiniflareOptions(options));
+  const download = await mf.dispatchFetch(origin + '/api/media/' + hash, { headers: { Cookie: pwLogin.cookie } });
+  assert.equal(download.status, 200);
+  assert.match(download.headers.get('Content-Security-Policy'), /sandbox/);
+  assert.deepEqual(Buffer.from(await download.arrayBuffer()), bytes);
+  const badMedia = await mf.dispatchFetch(origin + '/api/media/' + '0'.repeat(64), { method: 'PUT',
+    headers: { Origin: origin, Cookie: pwLogin.cookie, 'Content-Type': 'image/gif' }, body: bytes });
+  assert.equal(badMedia.status, 400);
+  const badBody = await badMedia.json(); assert.equal(badBody.code, 'hash-mismatch');
+  assert.equal((await req('GET', '/api/push/public-key')).status, 200);
+
 });

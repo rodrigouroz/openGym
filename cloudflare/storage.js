@@ -33,6 +33,23 @@ export function createStorage(storage, onFailure = () => {}) {
   return {
     // Documents have no directories or POSIX permissions. Access is through the DO only.
     mkdirSync() {}, chmodSync() {},
+    renameSync: (from, to) => {
+      try {
+        storage.transactionSync(() => {
+          if (!sql.exec('SELECT name FROM documents WHERE name = ?', from).toArray().length) throw missing(from);
+          sql.exec('DELETE FROM chunks WHERE name = ?', to);
+          sql.exec('DELETE FROM documents WHERE name = ?', to);
+          sql.exec('UPDATE documents SET name = ? WHERE name = ?', to, from);
+          sql.exec('UPDATE chunks SET name = ? WHERE name = ?', to, from);
+        });
+      } catch (e) { onFailure(e); throw e; }
+    },
+    readdirSync: name => {
+      const prefix = name.replace(/\/$/, '') + '/';
+      return [...new Set(sql.exec('SELECT name FROM documents').toArray()
+        .map(row => row.name).filter(n => n.startsWith(prefix))
+        .map(n => n.slice(prefix.length).split('/')[0]))];
+    },
     readFileSync: read,
     writeFileSync: write,
     existsSync: name => sql.exec('SELECT name FROM documents WHERE name = ?', name).toArray().length !== 0,

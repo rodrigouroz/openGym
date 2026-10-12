@@ -1,8 +1,11 @@
 import { DurableObject } from 'cloudflare:workers';
 import { httpServerHandler } from 'cloudflare:node';
 import { createApiServer } from '../api/app.js';
-import { createStorage } from './storage.js';
+import { createFiles } from './files.js';
 import { checkAccess } from './access.js';
+import { createCoach } from './coach.js';
+import * as pushTransport from './push.js';
+import { createCadence } from '../api/coach/cadence-service.js';
 
 // One existing openGym installation is the coordination unit: account creation,
 // session revocation, and admin operations span all its profiles. Do not shard it
@@ -10,22 +13,55 @@ import { checkAccess } from './access.js';
 export class Gym extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
-    const fs = createStorage(ctx.storage, () => ctx.abort('Persistent storage failed; reload the account database'));
+    const fs = createFiles(ctx.storage, () => ctx.abort('Persistent storage failed; reload the account database'));
+    this.sql = ctx.storage.sql;
+    this.sql.exec('CREATE TABLE IF NOT EXISTS rest_timers (id TEXT PRIMARY KEY, uid TEXT, device TEXT, at INTEGER, lang TEXT)');
+    const durableRestTimers = {
+      schedule: (uid, device = '', sec, lang = 'en') => this.sql.exec('INSERT OR REPLACE INTO rest_timers VALUES (?, ?, ?, ?, ?)', uid + ':' + device, uid, device, Date.now() + sec * 1000, lang),
+      cancel: (uid, device) => device ? this.sql.exec('DELETE FROM rest_timers WHERE uid = ? AND device = ?', uid, device) : this.sql.exec('DELETE FROM rest_timers WHERE uid = ?', uid)
+    };
     const noop = () => {};
+    this.coach = createCoach({ fs, env: { ...env, DATA_DIR: '/data' }, defer: () => { this.queued = true; } });
+    const cadence = createCadence({ jobs: this.coach.jobs, cfgStore: this.coach.cfgStore,
+      setInterval: fn => { this.cadenceTick = fn; return { unref() {} }; } });
     this.server = createApiServer({
       fs, durableWrite: fs.writeFileSync,
-      env: { ...env, DATA_DIR: '/data', MEDIA_UPLOADS: '0', PASSWORD_LOGIN: '0' },
-      background: false,
-      coachConfig: { publicConfig: () => null, clearProfileAuth: noop },
-      coachJobs: { recoverOnBoot: noop, setProposalHook: noop },
-      coachRoutes: () => ({}), startCadence: noop, startWarmup: noop
+      env: { ...env, DATA_DIR: '/data' },
+      background: false, durableRestTimers, pushTransport, checkPushEndpoint: pushTransport.pushEndpointError,
+      mediaStorage: { fs, syncDir: noop, syncFile: noop },
+      coachConfig: this.coach.cfgStore, coachJobs: this.coach.jobs,
+      coachRoutes: this.coach.coachRoutes, startCadence: cadence.startCadence, startWarmup: noop
     });
     this.http = httpServerHandler(this.server);
   }
   async fetch(request) {
-    // Background push schedules need alarms; do not accept jobs that cannot run.
-    if (new URL(request.url).pathname.startsWith('/api/push/')) return new Response('Unavailable on this deployment', { status: 404 });
-    return this.http.fetch(request);
+    const response = await this.http.fetch(request);
+    await this.server.drainPushes();
+    await this.schedule();
+    return response;
+  }
+  async schedule() {
+    const enabled = this.coach.cfgStore.isEnabled() && this.coach.cfgStore.isConnected();
+    const media = this.sql.exec("SELECT name FROM documents WHERE name LIKE '/data/uploads/%' LIMIT 1").toArray().length > 0;
+    const rest = this.sql.exec('SELECT MIN(at) at FROM rest_timers').toArray()[0].at;
+    const delay = this.queued ? 1 : this.server.hasSubscriptions() ? 10000 : enabled ? 60000 : media ? 3600000 : Infinity;
+    const next = Math.min(Date.now() + delay, rest ?? Infinity);
+    this.queued = false;
+    if (!Number.isFinite(next)) { await this.ctx.storage.deleteAlarm(); return; }
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > next) await this.ctx.storage.setAlarm(next);
+  }
+  async alarm() {
+    for (const timer of this.sql.exec('SELECT * FROM rest_timers WHERE at <= ?', Date.now()).toArray()) {
+      // Claim before sending: an alarm retry must not duplicate a rest alert.
+      this.sql.exec('DELETE FROM rest_timers WHERE id = ?', timer.id);
+      await this.server.sendRestAlert(timer.uid, timer.device, timer.lang);
+    }
+    await this.server.backgroundTick();
+    this.cadenceTick?.();
+    await this.coach.jobs.runQueued();
+    await this.server.drainPushes();
+    await this.schedule();
   }
 }
 
