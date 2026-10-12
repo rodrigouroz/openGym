@@ -428,3 +428,16 @@ test('the app\'s active equipment profile stands in when the Coach was told no e
   S.coach.profile.equipment = ['barbell'];
   assert.deepEqual(payload.build(S, { handle: handleFor('u1'), kind: 'create' }).coachProfile.equipment, ['barbell']);
 });
+
+test('review cutoff accepts epoch milliseconds and legacy ISO dates without resending older sessions', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 9, 12, 12) });
+  for (const at of [Date.UTC(2026, 9, 10, 12), '2026-10-10T12:00:00.000Z', '2026-10-10']) {
+    const S = sampleState();
+    S.coach.lastReview = { at };
+    S.workouts = ['2026-09-01', '2026-10-09', '2026-10-10', '2026-10-11'].map((d, i) => ({ id: 'cutoff-' + i, d, entries: [] }));
+    const p = payload.build(S, { handle: handleFor('cutoff'), kind: 'review' });
+    assert.deepEqual(p.window.workouts.map(w => w.d), ['2026-10-10', '2026-10-11'], String(at));
+  }
+  const S = sampleState(); S.coach.lastReview = { at: 'invalid' };
+  assert.doesNotThrow(() => payload.build(S, { handle: handleFor('cutoff'), kind: 'review' }));
+});
