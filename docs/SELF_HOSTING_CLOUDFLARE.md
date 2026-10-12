@@ -28,7 +28,8 @@ endpoints and rejects redirects. Other push services require extending its expli
 Media uses a conservative 1 GB installation budget, with 128 MiB reserved for overhead plus
 `MEDIA_MIN_FREE_MB` (512 MiB by default). This is deliberately below paid storage capacity;
 account-wide quotas and SQL overhead can still exhaust storage first. JSON export does not
-include uploaded media; use full-instance recovery for those files.
+include uploaded media; use the existing ZIP export with photos/videos for a portable
+media backup, or full-instance recovery.
 
 Docker's filesystem, CLI providers, local-model warmup and deployment remain available.
 This is a personal installation target: streaming media from SQLite and frequent reminder
@@ -49,6 +50,10 @@ Also set `COACH_AI_DAILY_CALLS` in `vars` to an explicit positive daily invocati
 before every model attempt, including repair attempts and the admin test. A crash, failed
 response, cancellation or forgotten conversation does not refund the reservation. The limit
 resets at UTC midnight; it is a call limit, not a dollar limit or account-wide spending cap.
+For a non-recurring allowance, use `COACH_AI_TOTAL_CALLS` instead (or alongside the daily
+limit). The total never resets at midnight, restart, or conversation deletion. When both
+limits are set, both apply. Legacy daily-only budget records cannot prove historical total
+usage, so adding a total cap to one fails closed rather than resetting its history.
 Existing per-profile and instance job caps apply as well. HTTP provider charges use their
 own credentials and the existing job caps.
 
@@ -71,6 +76,44 @@ Queued jobs survive a restart. An interrupted running job is marked failed inste
 replayed, because replay could bill twice. Completed job IDs are not re-executed by alarm
 retries. Rest alerts are claimed before sending; a process failure at that point can lose an
 alert rather than send it twice. Notification delivery itself is best effort, as with Docker.
+
+### Bounded synthetic validation
+
+`node cloudflare/scripts/smoke-ai.mjs --plan` prints a network-free plan. `--fixture`
+runs the four create/refine/review/debrief scenarios against the repository's fake model.
+Only `--execute` contacts Workers AI, using existing `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_API_TOKEN` environment values; obtain explicit spending approval first.
+It reads no production profile, creates no public endpoint, and does not enable production
+Coach. The REST inference response passes through the same native-schema adapter and
+Coach validator; production binding integration still needs its own smoke check.
+
+The live runner keeps a separate SQLite ledger under `cloudflare/.wrangler/`, reserves
+at most **8 attempts total**, and never resets that ledger between invocations. Repairs
+consume attempts; there are no automatic network retries. A lock excludes concurrent
+runs, and a crash leaves the lock for inspection before resuming. Do not delete or replace
+the ledger to retry. All state is synthetic. No prompt, credential or provider error body
+is printed.
+
+At the model prices checked on 2026-10-12, 8 × (80,000 input × $0.497/M + 8,192 output ×
+$4.881/M) = **$0.637961216**, before free allowance. Charging the entire context as input
+is intentionally conservative. Recheck prices at execution time; this bound covers model
+inference, not unrelated account usage, taxes or existing Workers/storage charges. It is
+not an ongoing spending authorization.
+
+### Browser and native-app access
+
+The browser/PWA uses its own Access login cookie. The packaged native app's existing
+remote pairing flow instead expects an Access service token (`frontend/src/lib/cf-access.js`).
+A browser-only owner policy does not admit that flow. Provisioning a service credential
+and policy is a separate security decision; this target does not create either or weaken
+Access. Use the phone's browser/PWA for this configuration. Native device features and
+remote pairing must not be claimed verified without testing the actual native client.
+
+CLI runtimes, local-model warmup and filesystem MCP do not implement separate in-app
+fitness actions. Routines, logging, statistics, progression and Coach's plan/review/debrief
+flows use shared frontend/core code. The missing choices are subscription-backed CLI
+providers, a private-LAN model backend, and an external LLM's live filesystem connection.
+Workers AI is instance-funded; it does not provide per-profile subscription sign-in.
 
 ## Local development and checks
 

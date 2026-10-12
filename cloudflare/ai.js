@@ -29,7 +29,7 @@ export function workersAI(ai, reserve = () => {}) {
       const bytes = new TextEncoder().encode(JSON.stringify({ messages, response_format })).length;
       if (bytes + output + 1024 > MODELS[model || MODEL]) return failure('Coach context exceeds this model’s conservative context budget; reduce the history or use another provider');
       if (signal?.aborted) return failure('cancelled');
-      try { reserve(); } catch { return failure('Workers AI daily invocation limit reached or not configured'); }
+      try { reserve(); } catch { return failure('Workers AI invocation allowance exhausted or not configured'); }
       let timer, onAbort;
       try {
         const stopped = new Promise((_, reject) => {

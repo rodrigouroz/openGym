@@ -9,21 +9,12 @@ import openai from '../api/coach/core/adapters/openai.js';
 import gemini from '../api/coach/core/adapters/gemini.js';
 import compatible from '../api/coach/core/adapters/compatible.js';
 import { workersAI, AI_PROVIDER } from './ai.js';
+import { createAIBudget } from './budget.js';
 
 export function createCoach({ fs, env, defer, ai = env.AI, adapters = {} }) {
   const providers = { ...HTTP_PROVIDERS, ...(ai ? { 'workers-ai': AI_PROVIDER } : {}) };
   const cfgStore = createCoachConfig({ fs, env, providers });
-  // Explicit deployment-level allowance, independent of user-editable job caps.
-  // Reserve before each attempt (including repairs/tests); interruptions never refund.
-  const reserve = () => {
-    const limit = Number(env.COACH_AI_DAILY_CALLS || 0);
-    if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('AI allowance not configured');
-    const name = '/data/coach-ai-budget.json', day = new Date().toISOString().slice(0, 10);
-    const budget = fs.existsSync(name) ? JSON.parse(fs.readFileSync(name, 'utf8')) : {};
-    const used = budget.day === day ? budget.used : 0;
-    if (!Number.isSafeInteger(used) || used < 0 || used >= limit) throw new Error('AI allowance exhausted');
-    fs.writeFileSync(name, JSON.stringify({ day, used: used + 1 }));
-  };
+  const reserve = createAIBudget(fs, env);
   const all = { anthropic, openai, gemini, compatible, 'workers-ai': workersAI(ai, reserve), ...adapters };
   const adapterFor = id => all[id] || null;
   const unavailable = () => { throw new Error('CLI providers require Docker'); };
