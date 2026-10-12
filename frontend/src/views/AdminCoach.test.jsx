@@ -806,3 +806,13 @@ it('offers a server binding provider without a credential step', async () => {
   expect(btn('Add API key')).toBeUndefined()
   expect(host.textContent).toContain('No API key is needed')
 })
+
+
+it('shows the lifetime AI allowance, uncertain reservations and manual top-up warning', async () => {
+  mocks.routes['/api/admin/coach'] = status({ aiBudget: { totalMicros: 5000000, remainingMicros: 100000,
+    spentMicros: 4800000, reservedMicros: 100000, low: true, automaticTopUp: false } })
+  await mount()
+  expect(host.textContent).toContain('$0.10 remaining of $5.00 total')
+  expect(host.textContent).toContain('Reserved or uncertain: $0.1000')
+  expect(host.querySelector('[role="alert"]').textContent).toContain('Top-up approval needed')
+})

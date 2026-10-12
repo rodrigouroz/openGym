@@ -1,5 +1,5 @@
 // Synthetic-only, one-time validation. Default invocation is a network-free plan.
-// Live execution requires separately obtained spending approval and existing credentials.
+// Paid validation runs only through the protected installation and its shared ledger.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,21 +7,20 @@ import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import { createStorage } from '../storage.js';
 import { createCoach } from '../coach.js';
-import { MODEL } from '../ai.js';
+import { MODEL, costMicros } from '../pricing.js';
 import { sampleState } from '../../api/test/helpers.mjs';
 
 const mode = process.argv[2] || '--plan';
-if (!['--plan', '--fixture', '--execute'].includes(mode) || process.argv.length > 3) throw new Error('Use --plan, --fixture or --execute');
+if (!['--plan', '--fixture'].includes(mode) || process.argv.length > 3) throw new Error('Use --plan or --fixture; live validation uses the protected deployment and its shared budget');
 const CALLS = 8, MAX_INPUT = 80000, MAX_OUTPUT = 8192;
-const ceiling = CALLS * (MAX_INPUT * 0.497 + MAX_OUTPUT * 4.881) / 1e6;
+const ceiling = CALLS * costMicros(MODEL, MAX_INPUT, MAX_OUTPUT) / 1e6;
 console.log(JSON.stringify({ model: MODEL, totalAttempts: CALLS, maxInputTokens: MAX_INPUT, maxOutputTokens: MAX_OUTPUT,
   modelCostCeilingUSD: ceiling, pricingChecked: '2026-10-12', recurringAllowance: false,
   note: 'Recheck current model prices before executing. No production profile data is read. Workers/storage charges are separate.' }));
 if (mode === '--plan') process.exit(0);
-if (mode === '--execute' && (!process.env.CLOUDFLARE_ACCOUNT_ID || !process.env.CLOUDFLARE_API_TOKEN)) throw new Error('Provide existing authorized Cloudflare credentials via environment; do not create a new token for this test');
 const root = fileURLToPath(new URL('../.wrangler/', import.meta.url));
 fs.mkdirSync(root, { recursive: true });
-const name = mode === '--execute' ? 'synthetic-ai-once' : 'synthetic-ai-fixture';
+const name = 'synthetic-ai-fixture-dollar-budget';
 const lock = path.join(root, name + '.lock');
 // Concurrent processes must never race the read/reserve/write. A crash leaves the
 // lock in place; inspect it and the durable budget before deliberately resuming.
@@ -42,17 +41,9 @@ try {
     if (mode === '--fixture') return { response: execFileSync(process.execPath,
       [fileURLToPath(new URL('../../api/coach/fixture-cli.mjs', import.meta.url))],
       { input: input.messages.map(m => m.content).join('\n\n'), encoding: 'utf8' }) };
-    // No network retry. An ambiguous timeout still consumes its reserved attempt.
-    const response = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(process.env.CLOUDFLARE_ACCOUNT_ID)}/ai/run/${MODEL}`, {
-      method: 'POST', headers: { Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(300000)
-    });
-    if (!response.ok) throw new Error('Inference request failed');
-    const result = await response.json();
-    if (!result.success || !result.result) throw new Error('Inference response failed');
-    return result.result;
+    throw new Error('Live tests must use the deployment’s shared budget');
   } };
-  const coach = createCoach({ fs: files, env: { DATA_DIR: '/data', AI: ai, COACH_AI_TOTAL_CALLS: String(CALLS) }, defer() {} });
+  const coach = createCoach({ fs: files, env: { DATA_DIR: '/data', AI: ai, COACH_AI_BUDGET_USD: '5' }, defer() {} });
   coach.cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: MAX_OUTPUT, models: { 'workers-ai': MODEL } });
   coach.jobs.recoverOnBoot();
   const uid = 'synthetic-validation';
@@ -71,7 +62,7 @@ try {
     console.log(JSON.stringify(summary));
     if (id !== 'create') coach.jobs.resolvePending(uid, { accepted: [] });
   }
-  console.log(JSON.stringify({ budget: JSON.parse(files.readFileSync('/data/coach-ai-budget.json', 'utf8')) }));
+  console.log(JSON.stringify({ budget: JSON.parse(files.readFileSync('/data/coach-ai-ledger.json', 'utf8')) }));
 } finally {
   db?.close(); fs.closeSync(lockFd); fs.unlinkSync(lock);
 }

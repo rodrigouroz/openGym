@@ -24,7 +24,7 @@ function setup(t, mode = '') {
       input: input.messages.map(m => m.content).join('\n\n'), encoding: 'utf8', env: { ...process.env, FIXTURE_MODE: mode }
     }) };
   } };
-  const make = () => createCoach({ fs, env: { DATA_DIR: '/data', AI: ai, COACH_AI_DAILY_CALLS: '10' }, defer() {} });
+  const make = () => createCoach({ fs, env: { DATA_DIR: '/data', AI: ai, COACH_AI_BUDGET_USD: '5' }, defer() {} });
   let coach = make();
   coach.cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: 4096, models: { 'workers-ai': '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b' } });
   const write = (id, state = sampleState()) => fs.writeFileSync('/data/state-' + id + '.json', JSON.stringify(state));

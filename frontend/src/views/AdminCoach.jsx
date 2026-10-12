@@ -192,6 +192,17 @@ export default function AdminCoach() {
         : `${doneCount} of ${flags.length} steps done. Finish the open step and the next one unfolds.`}
     </div>
 
+    {d.aiBudget && <div className="card" role={d.aiBudget.low || d.aiBudget.blocked ? 'alert' : undefined}>
+      <b>AI budget</b>
+      {d.aiBudget.blocked ? <p>{d.aiBudget.error}</p> : <>
+        <p>${(d.aiBudget.remainingMicros / 1e6).toFixed(2)} remaining of ${(d.aiBudget.totalMicros / 1e6).toFixed(2)} total.</p>
+        <div className="small">Usage estimate: ${(d.aiBudget.spentMicros / 1e6).toFixed(4)} · Reserved or uncertain: ${(d.aiBudget.reservedMicros / 1e6).toFixed(4)}.</div>
+        {(d.aiBudget.low || d.aiBudget.topUpNeeded) && <p>Top-up approval needed soon. Requests stop before the budget is exhausted.</p>}
+        {d.aiBudget.pricingExpired && <p>AI is paused until model prices are reviewed.</p>}
+      </>}
+      <div className="adm-hint">No automatic replenishment. This covers server AI; hosting and unrelated account usage are separate.</div>
+    </div>}
+
     {d.enabled && <>
       {/* ---------- provider ---------- */}
       <Step n={num()} title="Provider" hint={meta.label || 'Which AI answers the Coach'} done={step1Done} {...stepAt()}>
@@ -340,7 +351,7 @@ export default function AdminCoach() {
           </div>
 
           <div className="adm-group-t" style={{ marginTop: 14 }}>Whose account pays</div>
-          <div className="adm-hint">{d.authMode === 'profile'
+          <div className="adm-hint">{meta.binding ? 'The server’s AI budget pays for every profile. No personal subscription is used.' : d.authMode === 'profile'
             ? 'Each profile signs in with their own account.'
             : d.auth?.type === 'apikey' || meta.http
               ? 'One API key for the whole instance: every profile may use the Coach with it, and the daily limits above are what bound the spend.'

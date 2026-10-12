@@ -8,7 +8,7 @@ import { DATA_CATEGORIES } from './core/payload.js';
 import { validateBaseUrl, validateHeaders, baseUrlFor } from './core/providers.js';
 
 // Per-installation services; Node and Workers supply storage and execution.
-export function createCoachRoutes({ cfgStore, jobs, computeCohort, adapterFor, canDropPrivileges, env: runtimeEnv }) {
+export function createCoachRoutes({ cfgStore, jobs, computeCohort, adapterFor, canDropPrivileges, env: runtimeEnv, budgetStatus }) {
 // Job failures the user sees, in the app's own voice. The raw provider detail never reaches
 // them — it goes to the admin card, which is where someone can act on it (FR-47).
 const USER_ERROR = {
@@ -148,6 +148,7 @@ function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       const log = cfg.log || [];
       const today = new Date().toISOString().slice(0, 10);
       json(res, 200, {
+        ...(budgetStatus ? { aiBudget: budgetStatus() } : {}),
         disabledByEnv: cfgStore.COACH_DISABLED,
         enabled: !!cfg.enabled,
         provider: cfg.provider,

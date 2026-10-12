@@ -11,10 +11,12 @@ import compatible from '../api/coach/core/adapters/compatible.js';
 import { workersAI, AI_PROVIDER } from './ai.js';
 import { createAIBudget } from './budget.js';
 
-export function createCoach({ fs, env, defer, ai = env.AI, adapters = {} }) {
-  const providers = { ...HTTP_PROVIDERS, ...(ai ? { 'workers-ai': AI_PROVIDER } : {}) };
+export function createCoach({ fs, env, defer, ai = env.AI, adapters = {}, budget = createAIBudget(fs, env) }) {
+  const providers = { ...(env.COACH_AI_ONLY === '1' ? {} : HTTP_PROVIDERS), ...(ai ? { 'workers-ai': AI_PROVIDER } : {}) };
   const cfgStore = createCoachConfig({ fs, env, providers });
-  const reserve = createAIBudget(fs, env);
+  if (ai && env.COACH_AI_DEFAULT === '1' && !fs.existsSync('/data/coach.json'))
+    cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: 8192 });
+  const reserve = budget;
   const all = { anthropic, openai, gemini, compatible, 'workers-ai': workersAI(ai, reserve), ...adapters };
   const adapterFor = id => all[id] || null;
   const unavailable = () => { throw new Error('CLI providers require Docker'); };
@@ -28,6 +30,6 @@ export function createCoach({ fs, env, defer, ai = env.AI, adapters = {} }) {
     cohortForPayload: uid => cohort.cohortForPayload(uid), invalidateCohort: () => cohort.invalidate()
   });
   cohort = createCoachCohort({ cfgStore, readState: jobs.readState, listUserIds: jobs.listUserIds, isSharing: jobs.isSharing });
-  const { coachRoutes } = createCoachRoutes({ cfgStore, jobs, computeCohort: cohort.computeCohort, adapterFor, canDropPrivileges, env });
-  return { cfgStore, jobs, coachRoutes };
+  const { coachRoutes } = createCoachRoutes({ cfgStore, jobs, computeCohort: cohort.computeCohort, adapterFor, canDropPrivileges, env, budgetStatus: ai ? budget.status : undefined });
+  return { cfgStore, jobs, coachRoutes, budget };
 }

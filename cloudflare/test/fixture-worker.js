@@ -7,7 +7,7 @@ export class TestGym extends Gym {
       await new Promise(resolve => setTimeout(resolve, 100));
       return { response: { coach_contract: 1, nochange: true, reading: 'Synthetic fixture review.' } };
     } };
-    super(ctx, { ...env, AI: ai, COACH_AI_DAILY_CALLS: '10' });
+    super(ctx, { ...env, AI: ai, COACH_AI_BUDGET_USD: '5' });
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS test_inferences (id INTEGER PRIMARY KEY)');
   }
   info() {

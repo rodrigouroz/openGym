@@ -45,17 +45,26 @@ configuration:
 "ai": { "binding": "AI" }
 ```
 
-Also set `COACH_AI_DAILY_CALLS` in `vars` to an explicit positive daily invocation limit
-(for example `10`). An absent/zero limit refuses inference. Reservations persist in SQLite
-before every model attempt, including repair attempts and the admin test. A crash, failed
-response, cancellation or forgotten conversation does not refund the reservation. The limit
-resets at UTC midnight; it is a call limit, not a dollar limit or account-wide spending cap.
-For a non-recurring allowance, use `COACH_AI_TOTAL_CALLS` instead (or alongside the daily
-limit). The total never resets at midnight, restart, or conversation deletion. When both
-limits are set, both apply. Legacy daily-only budget records cannot prove historical total
-usage, so adding a total cap to one fails closed rather than resetting its history.
-Existing per-profile and instance job caps apply as well. HTTP provider charges use their
-own credentials and the existing job caps.
+Set `COACH_AI_BUDGET_USD` in `vars` to an explicitly approved lifetime dollar allowance.
+Absent or zero refuses inference. The durable SQLite ledger reserves the full model context
+and requested maximum output before each binding call, including repairs, admin tests and
+synthetic validation. It never resets with the day, restart, profile deletion or conversation
+forgetting. Valid provider token receipts settle the estimate; missing, invalid, failed,
+cancelled or ambiguous responses keep their full reservation. There is no automatic top-up.
+Legacy call-count ledgers require reconciliation rather than silently resetting past usage.
+
+Rates round upward from both published token and neuron prices, ignore shared free credits,
+and expire after 30 days. This is an application allowance using the checked price book, not
+an account billing limit or invoice guarantee: provider price changes, taxes, other services
+and other applications are outside it. Review `cloudflare/pricing.js` against current official
+pricing before deployment and before its expiry. Admin → Coach displays estimates, uncertain
+reservations, remaining allowance and a low-balance warning. Increasing the total is a manual
+operator decision requiring a fresh spending authorization.
+
+Set `COACH_AI_ONLY=1` to offer only the budgeted binding provider, preventing HTTP providers
+from spending through separate credentials. Without it, optional HTTP providers retain their
+own credentials and existing job caps. `COACH_AI_DEFAULT=1` enables the binding only when no
+Coach configuration exists; per-profile consent remains mandatory.
 
 In Admin → Coach, enable Coach and select **Workers AI**, instance authentication mode,
 and a model. The binding needs no API key. The adapter supports Llama 3.3 70B FP8 fast
@@ -81,24 +90,20 @@ alert rather than send it twice. Notification delivery itself is best effort, as
 
 `node cloudflare/scripts/smoke-ai.mjs --plan` prints a network-free plan. `--fixture`
 runs the four create/refine/review/debrief scenarios against the repository's fake model.
-Only `--execute` contacts Workers AI, using existing `CLOUDFLARE_ACCOUNT_ID` and
-`CLOUDFLARE_API_TOKEN` environment values; obtain explicit spending approval first.
-It reads no production profile, creates no public endpoint, and does not enable production
-Coach. The REST inference response passes through the same native-schema adapter and
-Coach validator; production binding integration still needs its own smoke check.
+Live checks use the actual deployment binding and **the same installation ledger**.
+Temporarily set `AI_VALIDATION=1` and `AI_OWNER_EMAIL` to the exact Access owner's email in
+private configuration. The outer Access JWT check remains mandatory. Only that owner can
+open `/api/cloudflare/validation`; a same-origin POST starts one persisted, idempotent run.
+Its isolated synthetic documents never read or modify real profiles. Four scenarios allow
+at most eight inference attempts including repairs, with no automatic network retries.
+Refresh reads progress without starting another run. Disable `AI_VALIDATION` after checking.
+No REST test path with a separate spending ledger is provided.
 
-The live runner keeps a separate SQLite ledger under `cloudflare/.wrangler/`, reserves
-at most **8 attempts total**, and never resets that ledger between invocations. Repairs
-consume attempts; there are no automatic network retries. A lock excludes concurrent
-runs, and a crash leaves the lock for inspection before resuming. Do not delete or replace
-the ledger to retry. All state is synthetic. No prompt, credential or provider error body
-is printed.
-
-At the model prices checked on 2026-10-12, 8 × (80,000 input × $0.497/M + 8,192 output ×
-$4.881/M) = **$0.637961216**, before free allowance. Charging the entire context as input
-is intentionally conservative. Recheck prices at execution time; this bound covers model
-inference, not unrelated account usage, taxes or existing Workers/storage charges. It is
-not an ongoing spending authorization.
+At the conservatively rounded rates checked on 2026-10-12, eight full-context/output attempts
+reserve at most **$0.638032**. These reservations consume the installation's approved total.
+A valid token receipt can reduce that estimate; uncertainty never releases it. Existing
+Workers and storage costs are separate. `/api/cloudflare/budget` exposes only budget metadata
+to the configured, authenticated owner and can support an owner-authorized notification check.
 
 ### Browser and native-app access
 

@@ -1,7 +1,8 @@
 import { SYSTEM_PROMPT } from '../api/coach/core/system-prompt.js';
 
-export const MODEL = '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b';
-export const MODELS = { [MODEL]: 80000, '@cf/meta/llama-3.3-70b-instruct-fp8-fast': 24000 };
+import { MODEL, PRICES } from './pricing.js';
+export { MODEL };
+export const MODELS = Object.fromEntries(Object.entries(PRICES).map(([m, p]) => [m, p.context]));
 export const AI_PROVIDER = { label: 'Workers AI', runtime: 'Workers AI binding', binding: true, defaultModel: MODEL };
 
 // The binding is optional. Never acquire credentials or enable billable inference here.
@@ -29,7 +30,9 @@ export function workersAI(ai, reserve = () => {}) {
       const bytes = new TextEncoder().encode(JSON.stringify({ messages, response_format })).length;
       if (bytes + output + 1024 > MODELS[model || MODEL]) return failure('Coach context exceeds this model’s conservative context budget; reduce the history or use another provider');
       if (signal?.aborted) return failure('cancelled');
-      try { reserve(); } catch { return failure('Workers AI invocation allowance exhausted or not configured'); }
+      let reservation;
+      try { reservation = reserve({ model: model || MODEL, maxOutput: output }); await reserve.flush?.(); }
+      catch { return failure('AI budget exhausted or unavailable. Ask the owner to approve a top-up.'); }
       let timer, onAbort;
       try {
         const stopped = new Promise((_, reject) => {
@@ -40,6 +43,7 @@ export function workersAI(ai, reserve = () => {}) {
         const result = await Promise.race([
           ai.run(model || MODEL, { messages, response_format, max_tokens: output, temperature: 0, stream: false }), stopped
         ]);
+        reserve.settle?.(reservation, result.usage);
         const text = typeof result.response === 'string' ? result.response : JSON.stringify(result.response);
         if (!text) return failure('Workers AI returned no response');
         return { code: 0, text, stderr: '' };
