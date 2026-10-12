@@ -53,3 +53,5 @@ Design notes for specific features, kept next to the code they describe:
 Ask on the [Discord](https://discord.gg/e62jY6fwVb) or in
 [Discussions](https://github.com/DuarteSantos8/openGym/discussions). If something in these docs was
 wrong or missing, that's worth an issue too.
+
+- [Optional Cloudflare Workers deployment](SELF_HOSTING_CLOUDFLARE.md) — private Access-protected hosting, SQLite persistence, and supported-feature limits.

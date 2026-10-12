@@ -159,7 +159,7 @@ test('the poll really is reading through the stat cache', async t => {
 // The other two sites want `lang` for a push payload, which nothing outside the push service can
 // observe — so they are pinned here, at the only place that can see them: the source.
 test('the three hot-path state reads all go through readStateCached', () => {
-  const src = fs.readFileSync(path.join(API, 'server.js'), 'utf8');
+  const src = fs.readFileSync(path.join(API, 'app.js'), 'utf8');
   // Every route is one `'METHOD /path': async (req, res) => {` entry in the routes object, so a
   // handler runs from its key to the start of the next one.
   const handler = key => {

@@ -30,3 +30,9 @@ frontend/bundle-size.json
 
 # Local planning notes
 docs/superpowers/plans/
+
+# Optional Cloudflare runtime and private deployment configuration
+cloudflare/.wrangler/
+cloudflare/.dev.vars*
+cloudflare/wrangler.production.jsonc
+cloudflare/build/
