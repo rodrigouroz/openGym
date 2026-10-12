@@ -68,7 +68,7 @@ export async function attemptOnce({ adapter, cfg, kind, payload, model, timeoutM
     ? changesOntoPlan(payload.refine?.previous, parsed.value) || parsed.value
     : parsed.value;
   const checked = kind === 'review'
-    ? validateReview(parsed.value, payload.plan, { customIds, equipment, offered })
+    ? validateReview(parsed.value, payload.plan, { customIds, equipment, offered, window: payload.window, aggregates: payload.aggregates, userNote: payload.userNote })
     : kind === 'debrief'
       ? validateDebrief(parsed.value)
       : validatePlan(answer, {

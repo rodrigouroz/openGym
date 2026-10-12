@@ -571,6 +571,20 @@ export function validateReview(data, plan, ctx = {}) {
     // rather than showing someone an empty proposal screen (FR-25).
     return { ok: true, nochange: true, reading: clampStr(data.summary || data.reading || '', 1200) };
   }
+  // The model cannot promote one session into a trend by inventing evidence.
+  // On sparse history only a targeted repeated stall or an explicit user request
+  // can justify scalar adjustments; structural changes wait for a fuller window.
+  if (ctx.window) {
+    const sessions = ctx.window.workouts?.length || 0;
+    const days = (Date.parse(ctx.window.to) - Date.parse(ctx.window.from)) / 86400000;
+    if (sessions < 3 || !Number.isFinite(days) || days < 7) {
+      const structural = new Set(['add-exercise', 'remove-exercise', 'swap-exercise', 'add-routine', 'remove-routine', 'reorder', 'superset', 'week']);
+      const stalled = new Set((ctx.aggregates?.exercises || []).filter(e => e.stalls >= 2).map(e => e.id));
+      if (!sessions || kept.some(c => structural.has(c.type) || (!isStr(ctx.userNote) && !stalled.has(c.target.exId)))) {
+        return fail(['The actual review window has insufficient evidence for these changes. Return nochange with a reading; do not infer a trend from one session.']);
+      }
+    }
+  }
   return {
     ok: true,
     proposal: {
@@ -579,9 +593,9 @@ export function validateReview(data, plan, ctx = {}) {
         // Clamped because this is stored verbatim in the synced coach log, and trim() cannot
         // shrink a single oversized entry — one answer could push a profile permanently over
         // the state-sync limit.
-        from: isStr(data.evidence?.from) ? clampStr(data.evidence.from, 40) : null,
-        to: isStr(data.evidence?.to) ? clampStr(data.evidence.to, 40) : null,
-        sessions: isInt(data.evidence?.sessions, 0, 10000) ? data.evidence.sessions : null
+        from: isStr(ctx.window?.from) ? clampStr(ctx.window.from, 40) : null,
+        to: isStr(ctx.window?.to) ? clampStr(ctx.window.to, 40) : null,
+        sessions: Array.isArray(ctx.window?.workouts) ? ctx.window.workouts.length : null
       },
       changes: kept,
       notes: (Array.isArray(data.notes) ? data.notes : []).filter(isStr).slice(0, 6).map(n => clampStr(n, 600))

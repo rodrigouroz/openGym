@@ -616,3 +616,22 @@ test('a flag is one pair of regional indicators, not a run of them spelling a wo
   }
   for (const key of ['trophy', 'crown', 'medal', 'flag', 'star', 'target', 'shield']) assert.equal(glyph(key), key);
 });
+
+
+test('review evidence is derived from the actual window, never invented by the model', () => {
+  const window = { from: '2026-10-01', to: '2026-10-10', workouts: [{}, {}, {}] };
+  const r = validateReview({ changes: [change()], evidence: { from: '1900-01-01', to: '2099-01-01', sessions: 9000 } }, PLAN, { window });
+  assert.deepEqual(r.proposal.evidence, { from: window.from, to: window.to, sessions: 3 });
+});
+test('one session cannot justify a trend; repeated stalls only justify their own exercise', () => {
+  const window = { from: '2026-10-10', to: '2026-10-10', workouts: [{}] };
+  const answer = { changes: [change()], evidence: { sessions: 100 } };
+  assert.equal(validateReview(answer, PLAN, { window }).ok, false);
+  assert.equal(validateReview(answer, PLAN, { window, aggregates: { exercises: [{ id: '0007', stalls: 2 }] } }).ok, false);
+  assert.equal(validateReview(answer, PLAN, { window, userNote: 'Please reduce this exercise to two sets' }).ok, true);
+  const two = { ...window, workouts: [{}, {}] };
+  assert.equal(validateReview(answer, PLAN, { window: two, aggregates: { exercises: [{ id: '0001', stalls: 2 }] } }).ok, true);
+  const structural = { changes: [change({ type: 'remove-exercise', after: null })] };
+  assert.equal(validateReview(structural, PLAN, { window: two, userNote: 'Change the plan' }).ok, false);
+  assert.equal(validateReview({ nochange: true, reading: 'Keep logging.' }, PLAN, { window }).ok, true);
+});

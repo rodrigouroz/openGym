@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { tempData, writeState, sampleState } from './helpers.mjs';
+import { tempData, writeState, reviewState as sampleState } from './helpers.mjs';
 
 const DIR = tempData();
 const cfg = await import('../coach/config.js');
