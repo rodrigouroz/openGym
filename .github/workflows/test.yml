@@ -16,7 +16,8 @@ on:
       - 'api/coach/prompts/**'
       - '.github/workflows/test.yml'
   push:
-    branches: [main, coach]
+    # Fork validation branch; no publishing workflow is enabled by this trigger.
+    branches: [main, coach, feat/cloudflare-workers]
     paths:
       - 'frontend/**'
       - 'api/**'
