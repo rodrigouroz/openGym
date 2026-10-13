@@ -35,7 +35,7 @@ const state = () => ({
   routines: [{ id: 'r1', name: 'A', ex: [{ id: EX, sets: 3, reps: 8, mode: 'reps' }, { id: EX2, sets: 3, reps: 10, mode: 'reps' }] }],
   week: { 1: 'r1' }, dayPlan: {}, customEx: [], bodyweight: [], workouts: [
     { d: '2026-08-20', start: 1, end: 3600001, entries: [{ id: EX, target: { sets: 3, reps: 8 }, sets: [{ done: true, w: 40, r: 8 }, { done: true, w: 40, r: 8 }, { done: true, w: 40, r: 8 }] }] }
-  ],
+  ].flatMap(w => [14, 7, 0].map(days => ({ ...structuredClone(w), d: new Date(Date.now() - days * 86400000).toISOString().slice(0, 10) }))),
   coach: { consent: { agreedAt: '2026-08-01T00:00:00Z', version: 1 }, profile: null, cadence: 'off', lastReview: null, log: [], snapshots: [] }
 })
 const chat = content => ({ status: 200, body: { choices: [{ finish_reason: 'stop', message: { content } }] } })

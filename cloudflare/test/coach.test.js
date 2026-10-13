@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { createStorage } from '../storage.js';
 import { createCoach } from '../coach.js';
 import { workersAI, MODEL } from '../ai.js';
-import { sampleState } from '../../api/test/helpers.mjs';
+import { reviewState as sampleState } from '../../api/test/helpers.mjs';
 
 function setup(t, mode = '') {
   const db = new DatabaseSync(':memory:');
