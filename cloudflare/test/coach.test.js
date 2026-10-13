@@ -57,8 +57,7 @@ test('Workers AI uses native schema shape; malformed answer repairs once; unknow
     assert.equal(h.calls.length, 2);
     assert.equal(h.calls[0].model, '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b');
     assert.equal(h.calls[0].input.stream, false);
-    assert.equal(h.calls[0].input.response_format.json_schema.type, 'object');
-    assert.equal(h.calls[0].input.response_format.json_schema.schema, undefined);
+    assert.deepEqual(h.calls[0].input.response_format, { type: 'json_object' });
     assert.equal(h.coach.jobs.status('a').last.outcome, mode === 'invalid-then-valid' ? 'ready' : 'failed');
     if (mode === 'unknown-exercise') assert.equal(h.coach.jobs.status('a').pending, null);
   }
@@ -68,12 +67,16 @@ test('create, refine and debrief use the existing validation pipeline', async t 
   const h = setup(t); h.write('a');
   h.coach.jobs.enqueue('a', { kind: 'create' }); await h.coach.jobs.runQueued();
   assert.equal(h.coach.jobs.status('a').last.outcome, 'ready', JSON.stringify(h.coach.cfgStore.load().log));
+  assert.equal(h.calls[0].input.response_format.json_schema.type, 'object');
+  assert.equal(h.calls[0].input.response_format.json_schema.schema, undefined);
   h.coach.jobs.enqueue('a', { kind: 'create', refine: 'Use the same equipment' }); await h.coach.jobs.runQueued();
   assert.equal(h.coach.jobs.status('a').pending.iteration, 2);
   h.coach.jobs.resolvePending('a', { accepted: ['r1'] });
   assert.equal(h.coach.jobs.status('a').pending, null);
   h.coach.jobs.enqueue('a', { kind: 'debrief', workoutId: 'w1' }); await h.coach.jobs.runQueued();
   assert.equal(h.coach.jobs.status('a').last.outcome, 'ready', JSON.stringify(h.coach.cfgStore.load().log));
+  assert.equal(h.calls[0].input.response_format.json_schema.type, 'object');
+  assert.equal(h.calls[0].input.response_format.json_schema.schema, undefined);
 });
 
 test('consent revoked while queued prevents inference; running interruption is recorded without replay', async t => {

@@ -22,7 +22,11 @@ export function workersAI(ai, reserve = () => {}) {
         { role: 'system', content: SYSTEM_PROMPT + (system ? '\n\n' + system : '') },
         { role: 'user', content: prompt }
       ];
-      const response_format = schema ? { type: 'json_schema', json_schema: schema } : { type: 'json_object' };
+      // Scout's constrained decoder produced non-JSON/truncated review answers in
+      // live checks with the polymorphic before/after schema. JSON-object mode
+      // avoids that decoder path; the same strict review validator still judges it.
+      const review = !!schema?.properties?.changes;
+      const response_format = schema && !review ? { type: 'json_schema', json_schema: schema } : { type: 'json_object' };
       const output = Math.min(8192, Math.max(1024, maxTokens));
       // UTF-8 bytes conservatively bound byte-BPE input tokens. Include schema and a
       // reserve for chat framing rather than guessing characters per token. Large

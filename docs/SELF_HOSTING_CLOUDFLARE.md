@@ -71,7 +71,8 @@ and a model. The binding needs no API key. The adapter supports Llama 3.3 70B FP
 (24k context), Llama 4 Scout (131k), and the default DeepSeek R1 Distill Qwen 32B (80k).
 `COACH_AI_MODEL` explicitly selects a deployment default when no admin model is stored; there
 is no automatic fallback. In live synthetic testing, DeepSeek exceeded the five-minute job
-timeout, so validate your chosen model before relying on it. It uses native JSON schema mode,
+timeout, so validate your chosen model before relying on it. It uses native JSON schema mode for plans and debriefs, and JSON-object mode for reviews
+(the polymorphic review schema produced invalid/truncated answers in live decoder tests),
 then the existing strict response validator and at most one repair. Model quality and live
 provider behavior should be checked with synthetic data before sharing workout history.
 The normal consent flow remains mandatory for each profile.
