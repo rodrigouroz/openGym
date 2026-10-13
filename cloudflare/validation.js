@@ -4,8 +4,11 @@ import { createCoach } from './coach.js';
 // prefix and spend through the SAME budget as the actual installation. No user
 // accounts, passkeys, workouts or profile state are read or changed.
 export function createValidation({ fs, env, budget, defer, decision = null }) {
+  const runId = env.AI_VALIDATION_RUN || '';
+  if (!/^[a-z0-9-]{0,40}$/.test(runId)) throw new Error('Invalid synthetic run id');
+  const prefix = '/validation' + (runId ? '/' + runId : '');
   const scoped = { ...fs };
-  const key = name => name.replace(/^\/data(?=\/|$)/, '/validation');
+  const key = name => name.replace(/^\/data(?=\/|$)/, prefix);
   for (const method of ['mkdirSync', 'readFileSync', 'writeFileSync', 'existsSync', 'unlinkSync', 'readdirSync']) scoped[method] = (name, ...args) => fs[method](key(name), ...args);
   scoped.renameSync = (from, to) => fs.renameSync(key(from), key(to));
   if (!scoped.existsSync('/data/secret')) scoped.writeFileSync('/data/secret', 'synthetic-validation-secret');
@@ -15,13 +18,13 @@ export function createValidation({ fs, env, budget, defer, decision = null }) {
     return budget(request);
   }, { status: budget.status, flush: budget.flush, settle: budget.settle });
   const coach = createCoach({ fs: scoped, env: { ...env, DATA_DIR: '/data', COACH_AI_ONLY: '1' }, budget: shared, defer });
-  coach.cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: 8192 });
+  coach.cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: 4096 });
   coach.jobs.recoverOnBoot();
-  const file = '/validation/run.json', uid = 'synthetic';
+  const file = prefix + '/run.json', uid = 'synthetic';
   const read = () => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
   const save = r => fs.writeFileSync(file, JSON.stringify(r));
   const cases = [ { kind: 'create' }, { kind: 'create', refine: 'Use the same equipment and keep the session under 45 minutes.' }, { kind: 'review' }, { kind: 'debrief', workoutId: 'w1' } ];
-  const decisionFile = '/validation/decisions.json';
+  const decisionFile = prefix + '/decisions.json';
   const decisions = () => fs.existsSync(decisionFile) ? JSON.parse(fs.readFileSync(decisionFile, 'utf8')) : null;
   const status = () => ({ run: read(), decisions: decisions(), budget: budget.status() });
   const queue = r => { try { coach.jobs.enqueue(uid, cases[r.next]); r.queued = true; save(r); }
@@ -57,10 +60,11 @@ export function createValidation({ fs, env, budget, defer, decision = null }) {
         return;
       }
       await coach.jobs.runQueued();
-      const last = coach.jobs.status(uid).last;
+      const current = coach.jobs.status(uid), last = current.last;
       if (r.queued) {
         r.results.push({ scenario: ['create', 'refine', 'review', 'debrief'][r.next], outcome: last?.outcome, errorClass: last?.errorClass || null,
-          detail: coach.cfgStore.lastError()?.detail?.slice(0, 600) || null });
+          detail: last?.outcome === 'failed' ? coach.cfgStore.lastError()?.detail?.slice(0, 600) || null : null,
+          result: current.pending ? { summary: current.pending.summary, evidence: current.pending.evidence, changes: current.pending.changes, bundle: current.pending.bundle, score: current.pending.score, highlights: current.pending.highlights, watch: current.pending.watch, nextTime: current.pending.nextTime } : null });
         if (r.next !== 0) coach.jobs.resolvePending(uid, { accepted: [] });
         r.next++; r.queued = false; r.done = r.next >= cases.length; save(r);
       }

@@ -49,7 +49,9 @@ export function workersAI(ai, reserve = () => {}) {
         return { code: 0, text, stderr: '' };
       } catch (e) {
         // Provider errors may echo prompts. Do not return or log their raw messages.
-        return { ...failure(e.message === 'timeout' ? 'timeout' : e.message === 'cancelled' ? 'cancelled' : 'Workers AI inference failed'), timedOut: e.message === 'timeout' };
+        const code = /\b(?:3\d{3}|5\d{3}|1\d{4})\b/.exec(String(e.message))?.[0];
+        const detail = 'Workers AI inference failed' + (code ? ' (code ' + code + ')' : '');
+        return { ...failure(e.message === 'timeout' ? 'timeout' : e.message === 'cancelled' ? 'cancelled' : detail), timedOut: e.message === 'timeout' };
       } finally {
         clearTimeout(timer);
         signal?.removeEventListener('abort', onAbort);

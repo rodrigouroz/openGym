@@ -100,7 +100,10 @@ open `/api/cloudflare/validation`; a same-origin POST starts one persisted, idem
 Its isolated synthetic documents never read or modify real profiles. Four scenarios allow
 at most eight inference attempts including repairs, with no automatic network retries.
 Refresh reads progress without starting another run. Disable `AI_VALIDATION` after checking.
-No REST test path with a separate spending ledger is provided.
+No REST test path with a separate spending ledger is provided. An operator can explicitly
+set a new `AI_VALIDATION_RUN` slug for a fresh isolated evaluation after fixing a failure.
+Each run has its own eight-attempt guard, but all runs share the same lifetime dollar ledger.
+Changing the slug is never automatic and must stay within the approved testing allowance.
 
 At the conservatively rounded rates checked on 2026-10-12, eight full-context/output attempts
 reserve at most **$0.638032**. These reservations consume the installation's approved total.
