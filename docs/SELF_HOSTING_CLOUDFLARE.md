@@ -68,7 +68,10 @@ Coach configuration exists; per-profile consent remains mandatory.
 
 In Admin → Coach, enable Coach and select **Workers AI**, instance authentication mode,
 and a model. The binding needs no API key. The adapter supports Llama 3.3 70B FP8 fast
-(24k context) and the default DeepSeek R1 Distill Qwen 32B (80k). It uses native JSON schema mode,
+(24k context), Llama 4 Scout (131k), and the default DeepSeek R1 Distill Qwen 32B (80k).
+`COACH_AI_MODEL` explicitly selects a deployment default when no admin model is stored; there
+is no automatic fallback. In live synthetic testing, DeepSeek exceeded the five-minute job
+timeout, so validate your chosen model before relying on it. It uses native JSON schema mode,
 then the existing strict response validator and at most one repair. Model quality and live
 provider behavior should be checked with synthetic data before sharing workout history.
 The normal consent flow remains mandatory for each profile.
@@ -104,6 +107,22 @@ reserve at most **$0.638032**. These reservations consume the installation's app
 A valid token receipt can reduce that estimate; uncertainty never releases it. Existing
 Workers and storage costs are separate. `/api/cloudflare/budget` exposes only budget metadata
 to the configured, authenticated owner and can support an owner-authorized notification check.
+
+### Optional decision-model observations
+
+`AI_DECISION_OBSERVE=1` adds three synthetic Clef-flash triage observations after the
+validation run. It is off by default and is not used on real profiles. The injected adapter
+returns only `continue`, `full_review`, or `insufficient_data` probabilities; it never creates
+plans, changes progression or loads, suppresses a review, or bypasses the validator. Invalid
+and low-confidence answers remain rejected or uncertain. The same lifetime ledger reserves
+before each call; the overall diagnostic run still allows at most eight attempts. A crash
+claims the observation run without replaying paid requests.
+
+Cloudflare's [Clef-flash documentation](https://developers.cloudflare.com/workers-ai/models/clef-flash/)
+specifies typed decisions, a 24,576-token context and input-only billing. The adapter uses
+that smaller documented context, reserves at a rounded-up $0.039/M input rate, and rejects
+oversized input locally so the service does not silently truncate it. These observations are
+an evaluation aid, not a replacement for the generative Coach. Turn the flag off after evaluation.
 
 ### Browser and native-app access
 

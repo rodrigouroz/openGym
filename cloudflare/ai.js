@@ -2,7 +2,7 @@ import { SYSTEM_PROMPT } from '../api/coach/core/system-prompt.js';
 
 import { MODEL, PRICES } from './pricing.js';
 export { MODEL };
-export const MODELS = Object.fromEntries(Object.entries(PRICES).map(([m, p]) => [m, p.context]));
+export const MODELS = Object.fromEntries(Object.entries(PRICES).filter(([, p]) => p.outputNano > 0).map(([m, p]) => [m, p.context]));
 export const AI_PROVIDER = { label: 'Workers AI', runtime: 'Workers AI binding', binding: true, defaultModel: MODEL };
 
 // The binding is optional. Never acquire credentials or enable billable inference here.

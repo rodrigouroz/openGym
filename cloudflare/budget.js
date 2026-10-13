@@ -47,7 +47,7 @@ export function createAIBudget(fs, env, now = Date.now, flush = async () => {}) 
   };
   const reserve = ({ model, maxOutput }) => {
     const p = PRICES[model];
-    if (!p || now() >= PRICE_VALID_UNTIL || !Number.isSafeInteger(maxOutput) || maxOutput < 1 || maxOutput > 8192) throw new Error('AI pricing unavailable');
+    if (!p || now() >= PRICE_VALID_UNTIL || !Number.isSafeInteger(maxOutput) || maxOutput < (p.outputNano === 0 ? 0 : 1) || maxOutput > 8192) throw new Error('AI pricing unavailable');
     const maxCost = costMicros(model, p.context, maxOutput), b = read();
     if (b.spentMicros + b.reservedMicros + maxCost > limit()) throw new Error('AI budget exhausted: top-up approval needed');
     const id = crypto.randomUUID();

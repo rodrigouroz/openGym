@@ -12,7 +12,7 @@ import { workersAI, AI_PROVIDER } from './ai.js';
 import { createAIBudget } from './budget.js';
 
 export function createCoach({ fs, env, defer, ai = env.AI, adapters = {}, budget = createAIBudget(fs, env) }) {
-  const providers = { ...(env.COACH_AI_ONLY === '1' ? {} : HTTP_PROVIDERS), ...(ai ? { 'workers-ai': AI_PROVIDER } : {}) };
+  const providers = { ...(env.COACH_AI_ONLY === '1' ? {} : HTTP_PROVIDERS), ...(ai ? { 'workers-ai': { ...AI_PROVIDER, defaultModel: env.COACH_AI_MODEL || AI_PROVIDER.defaultModel } } : {}) };
   const cfgStore = createCoachConfig({ fs, env, providers });
   if (ai && env.COACH_AI_DEFAULT === '1' && !fs.existsSync('/data/coach.json'))
     cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: 8192 });

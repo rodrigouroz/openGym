@@ -39,3 +39,18 @@ test('rates conservatively cover both displayed token rates and neuron-based bil
   assert.ok(PRICES['@cf/meta/llama-3.3-70b-instruct-fp8-fast'].inputNano >= 26668 * 11 / 1000);
   assert.equal(costMicros(MODEL, 80000, 8192), 79754);
 });
+
+test('concurrent requests cannot oversubscribe; no inference precedes durable flush and failed calls remain reserved', async () => {
+  const { workersAI } = await import('../ai.js');
+  const fs = files(); let release, calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const budget = createAIBudget(fs, { COACH_AI_BUDGET_USD: '0.08' }, () => Date.UTC(2026, 9, 12), () => gate);
+  const adapter = workersAI({ async run() { calls++; throw new Error('ambiguous provider failure'); } }, budget);
+  const opts = { prompt: 'synthetic', maxTokens: 8192, model: MODEL };
+  const first = adapter.invoke(opts), second = adapter.invoke(opts);
+  assert.equal((await second).code, 1); assert.equal(calls, 0);
+  assert.equal(budget.status().attempts, 1); release();
+  assert.equal((await first).code, 1); assert.equal(calls, 1);
+  const restored = createAIBudget(fs, { COACH_AI_BUDGET_USD: '0.08' }, () => Date.UTC(2026, 9, 13));
+  assert.equal(restored.status().reservedMicros, 79754); assert.throws(() => restored(request), /exhausted/);
+});

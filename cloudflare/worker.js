@@ -7,6 +7,7 @@ import { createCoach } from './coach.js';
 import * as pushTransport from './push.js';
 import { createAIBudget } from './budget.js';
 import { createValidation } from './validation.js';
+import { observeDecision } from './decision.js';
 import { decodeJwt } from 'jose';
 import { createCadence } from '../api/coach/cadence-service.js';
 
@@ -37,7 +38,7 @@ export class Gym extends DurableObject {
       coachRoutes: this.coach.coachRoutes, startCadence: cadence.startCadence, startWarmup: noop
     });
     this.env = env;
-    this.validation = env.AI_VALIDATION === '1' && env.AI ? createValidation({ fs, env, budget, defer: () => { this.queued = true; } }) : null;
+    this.validation = env.AI_VALIDATION === '1' && env.AI ? createValidation({ fs, env, budget, decision: env.AI_DECISION_OBSERVE === '1' ? observeDecision(env.AI, budget) : null, defer: () => { this.queued = true; } }) : null;
     this.http = httpServerHandler(this.server);
   }
   async fetch(request) {
@@ -47,7 +48,11 @@ export class Gym extends DurableObject {
       // to the deployment owner rather than all users of an Access application.
       let email; try { email = decodeJwt(request.headers.get('Cf-Access-Jwt-Assertion')).email; } catch {}
       if (!this.env.AI_OWNER_EMAIL || email !== this.env.AI_OWNER_EMAIL) return new Response('Forbidden', { status: 403 });
-      if (url.pathname === '/api/cloudflare/budget' && request.method === 'GET') return Response.json(this.coach.budget.status(), { headers: { 'Cache-Control': 'no-store' } });
+      if (url.pathname === '/api/cloudflare/budget' && request.method === 'GET') {
+        const status = this.coach.budget.status();
+        if (request.headers.get('Accept')?.includes('text/html')) return new Response('<!doctype html><meta charset=utf-8><title>openGym AI allowance</title><h1>openGym AI allowance</h1><p>No automatic top-up. This page contains only budget metadata.</p><pre>' + JSON.stringify(status, null, 2).replaceAll('&', '&amp;').replaceAll('<', '&lt;') + '</pre>', { headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'" } });
+        return Response.json(status, { headers: { 'Cache-Control': 'no-store' } });
+      }
       if (url.pathname !== '/api/cloudflare/validation' || !this.validation) return new Response('Not found', { status: 404 });
       if (request.method === 'POST') {
         if (request.headers.get('Origin') !== this.env.ORIGIN) return new Response('Forbidden', { status: 403 });

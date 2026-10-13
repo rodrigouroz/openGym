@@ -22,7 +22,7 @@ test('real Workers runtime: passkeys, first admin, sessions, large state, confli
   const req = async (method, path, body, cookie, headers = {}) => {
     const r = await mf.dispatchFetch(origin + path, { method,
       headers: { 'Content-Type': 'application/json', Origin: origin, ...(cookie ? { Cookie: cookie } : {}), ...headers },
-      body: body === undefined ? undefined : JSON.stringify(body) });
+      body: body === undefined ? undefined : JSON.stringify(body) }).catch(e => { throw new Error(method + ' ' + path + ': ' + e.message + ' / ' + e.cause?.message, { cause: e }); });
     const text = await r.text();
     return { status: r.status, body: text ? JSON.parse(text) : null, cookie: r.headers.get('set-cookie')?.split(';')[0] };
   };

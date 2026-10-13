@@ -3,7 +3,7 @@ import { createCoach } from './coach.js';
 // Opt-in deployment diagnostics. Synthetic profiles live in a separate document
 // prefix and spend through the SAME budget as the actual installation. No user
 // accounts, passkeys, workouts or profile state are read or changed.
-export function createValidation({ fs, env, budget, defer }) {
+export function createValidation({ fs, env, budget, defer, decision = null }) {
   const scoped = { ...fs };
   const key = name => name.replace(/^\/data(?=\/|$)/, '/validation');
   for (const method of ['mkdirSync', 'readFileSync', 'writeFileSync', 'existsSync', 'unlinkSync', 'readdirSync']) scoped[method] = (name, ...args) => fs[method](key(name), ...args);
@@ -21,12 +21,14 @@ export function createValidation({ fs, env, budget, defer }) {
   const read = () => fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
   const save = r => fs.writeFileSync(file, JSON.stringify(r));
   const cases = [ { kind: 'create' }, { kind: 'create', refine: 'Use the same equipment and keep the session under 45 minutes.' }, { kind: 'review' }, { kind: 'debrief', workoutId: 'w1' } ];
-  const status = () => ({ run: read(), budget: budget.status() });
+  const decisionFile = '/validation/decisions.json';
+  const decisions = () => fs.existsSync(decisionFile) ? JSON.parse(fs.readFileSync(decisionFile, 'utf8')) : null;
+  const status = () => ({ run: read(), decisions: decisions(), budget: budget.status() });
   const queue = r => { try { coach.jobs.enqueue(uid, cases[r.next]); r.queued = true; save(r); }
     catch { r.done = true; r.error = 'Synthetic job could not be queued'; save(r); } };
   return {
     status,
-    pending: () => { const r = read(); return !!r && !r.done; },
+    pending: () => { const r = read(); return !!r && (!r.done || (decision && !decisions())); },
     start() {
       if (read()) return status(); // Idempotent: refresh/retry never starts a second paid run.
       const today = new Date(); const date = back => new Date(today.getTime() - back * 86400000).toISOString().slice(0, 10);
@@ -40,7 +42,20 @@ export function createValidation({ fs, env, budget, defer }) {
       const r = { startAttempts: budget.status().attempts, next: 0, results: [], done: false, queued: false }; save(r); queue(r); return status();
     },
     async tick() {
-      const r = read(); if (!r || r.done) return;
+      const r = read(); if (!r) return;
+      if (r.done) {
+        if (decision && !decisions()) {
+          // Claim once before any paid request. An interrupted observation is not replayed.
+          fs.writeFileSync(decisionFile, JSON.stringify({ status: 'started', results: [] }));
+          const results = [];
+          for (const state of [{ sessions: 1, spanDays: 0, stalls: 0 }, { sessions: 6, spanDays: 14, stalls: 0 }, { sessions: 6, spanDays: 14, stalls: 3 }]) {
+            if (budget.status().attempts - r.startAttempts >= 8) break;
+            results.push({ state, observation: await decision(state) });
+          }
+          fs.writeFileSync(decisionFile, JSON.stringify({ status: 'done', results }));
+        }
+        return;
+      }
       await coach.jobs.runQueued();
       const last = coach.jobs.status(uid).last;
       if (r.queued) {
