@@ -245,7 +245,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.4.1</span>
-    <span>69 endpoints</span>
+    <span>72 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -262,6 +262,11 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <h3>Authentication</h3>
 <p>Sign-in is by <b>passkey</b> (WebAuthn, via <code>@simplewebauthn/server</code>). A successful <code>register/verify</code> or <code>login/verify</code> sets the session cookie; every authenticated route then works with that cookie. The paired mobile app has no shared cookie jar, so it redeems a short pairing code (<code>/api/pair/redeem</code>) for the <i>same</i> signed token and sends it as <code>Authorization: Bearer &lt;token&gt;</code> instead.</p>
 <p>An instance started with <code>PASSWORD_LOGIN=1</code> also offers <b>name-and-password sign-in</b> (tag <code>password</code>): opt-in per profile, scrypt-hashed, throttled, with an admin-issued one-time reset code instead of e-mail. A profile may also add an e-mail address to sign in with instead of its name (<code>/api/account/email</code>); no mail is ever sent to it. Its routes set exactly the same cookie. With the flag off (the default) every one of them answers 404.</p>
+  </div>
+  <div class="ov">
+    <h3>Read-only tokens</h3>
+<p>For an outside integration (an assistant, a script) that only needs to <i>read</i> a profile, a signed-in profile can make long-lived <b>read-only tokens</b> (<code>/api/account/read-tokens</code>), each with a name and an optional expiry. A token looks like <code>ogr_&lt;43 base64url characters&gt;</code>, is shown once at creation and is stored only as a SHA-256. Sent as <code>Authorization: Bearer ogr_…</code>, it is accepted by exactly three operations: <code>GET /api/data</code>, <code>GET /api/data/rev</code> and <code>GET /api/media/{hash}</code>. Every other method and path, unknown ones included, answers <code>403 {&quot;error&quot;: &quot;this token can only read&quot;, &quot;code&quot;: &quot;read-only&quot;}</code> before any route runs, so a read-only token can neither write, nor make, list or revoke tokens, nor renew itself into a session. A revoked, expired or unknown token is <code>401 {&quot;error&quot;: &quot;not signed in&quot;}</code> on the three operations above; revoking one, or <code>POST /api/logout/all</code>, takes effect on the next request. Session cookies and the paired app's Bearer session token are unaffected.</p>
+<p>On a deployment behind Cloudflare Access (<code>docs/SELF_HOSTING_CLOUDFLARE.md</code>), Access still sits in front of the API: the integration also needs an Access service token (<code>CF-Access-Client-Id</code> / <code>CF-Access-Client-Secret</code>) allowed by a Service Auth policy, the same setup a paired phone uses (<code>docs/MOBILE.md</code>).</p>
   </div>
   <div class="ov">
     <h3>Throttling</h3>
@@ -574,7 +579,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="ep-sum">Sign out everywhere</span>
   </summary>
   <div class="ep-body">
-<p>Bumps the account's session version, which invalidates <b>every</b> cookie and Bearer token ever issued for it, on every device, including a copy someone walked off with. Passkeys are untouched; signing back in works immediately. Also clears the caller's own cookie. Unredeemed pairing codes for the account are voided too.</p>
+<p>Bumps the account's session version, which invalidates <b>every</b> cookie and Bearer token ever issued for it, on every device, including a copy someone walked off with. Passkeys are untouched; signing back in works immediately. Also clears the caller's own cookie. Unredeemed pairing codes for the account are voided too, and every read-only token of the account is revoked.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
 
 
@@ -587,6 +592,129 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow rrow">
     <span class="r-code s4">401</span>
     <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-listReadTokens">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/account/read-tokens</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">This profile's read-only tokens</span>
+  </summary>
+  <div class="ep-body">
+<p>Every live read-only token of the caller's profile (see <i>Read-only tokens</i> above), without the token or its hash. Expired tokens are not listed: they can never work again. <code>lastUsed</code> is updated at most every ten minutes per token.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">The list.<span class="r-sig">{ tokens: <a href="#schema-ReadToken">ReadToken</a>[] }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The request carries a read-only token (<code>Authorization: Bearer ogr_…</code>), which only <code>GET /api/data</code>, <code>GET /api/data/rev</code> and <code>GET /api/media/{hash}</code> accept. Every other method and path answers this, whether or not the token is valid.<span class="r-sig"><code>{&quot;error&quot;:&quot;this token can only read&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-createReadToken">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/account/read-tokens</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Make a read-only token</span>
+  </summary>
+  <div class="ep-body">
+<p>Returns the token <b>once</b>, in <code>token</code>; only its SHA-256 is stored, so it cannot be shown again. Without <code>expiresAt</code> it is good until revoked, or until the profile signs out everywhere. At most 20 live tokens per profile. Audited as <code>auth.readtoken.create</code> with the token's name.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">name<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string <span class="p-hint">(&le; 60 chars)</span></span>
+    <span class="p-desc">What the token is for, as the list shows it (trimmed).</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expiresAt</span>
+    <span class="p-type">string <span class="p-hint">(date-time)</span> | null</span>
+    <span class="p-desc">When the token stops working. In the future and at most ten years away; absent or null for no expiry.</span>
+  </div>
+</div>
+<pre><code>{
+  &quot;name&quot;: &quot;My assistant&quot;,
+  &quot;expiresAt&quot;: &quot;2027-01-01T00:00:00.000Z&quot;
+}</code></pre>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">201</span>
+    <span class="p-desc">Made. The token is in this answer and nowhere else.<span class="r-sig">{ token: string, readToken: <a href="#schema-ReadToken">ReadToken</a> }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc"><code>name-required</code> (missing or blank), <code>name-too-long</code> (over 60 characters) or <code>expiry-invalid</code> (not a date-time, in the past, or more than ten years away).<span class="r-sig"><code>{&quot;error&quot;:&quot;a name is required&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The request carries a read-only token (<code>Authorization: Bearer ogr_…</code>), which only <code>GET /api/data</code>, <code>GET /api/data/rev</code> and <code>GET /api/media/{hash}</code> accept. Every other method and path answers this, whether or not the token is valid.<span class="r-sig"><code>{&quot;error&quot;:&quot;this token can only read&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">The profile already has 20 live read-only tokens.<span class="r-sig"><code>{&quot;error&quot;:&quot;a profile can have at most 20 read-only tokens&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-revokeReadToken">
+  <summary>
+    <span class="m delete">DELETE</span>
+    <span class="ep-path"><code>/api/account/read-tokens</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Revoke a read-only token</span>
+  </summary>
+  <div class="ep-body">
+<p>Removes it from storage before answering, so the next request carrying it is refused with 401. Audited as <code>auth.readtoken.revoke</code> with the token's name.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc">The token's <code>id</code> from the list.</span>
+  </div>
+</div>
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Revoked. The list as it is now.<span class="r-sig">{ ok: always true, tokens: <a href="#schema-ReadToken">ReadToken</a>[] }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The request carries a read-only token (<code>Authorization: Bearer ogr_…</code>), which only <code>GET /api/data</code>, <code>GET /api/data/rev</code> and <code>GET /api/media/{hash}</code> accept. Every other method and path answers this, whether or not the token is valid.<span class="r-sig"><code>{&quot;error&quot;:&quot;this token can only read&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">No read-only token of this profile has that id.<span class="r-sig"><code>{&quot;error&quot;:&quot;no read-only token of this profile has that id&quot;}</code></span></span>
   </div>
     </div>
   </div>
@@ -1465,7 +1593,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="ep-sum">Pull the account's app state</span>
   </summary>
   <div class="ep-body">
-<p>Returns the caller's entire app state as one JSON blob, or <code>{&quot;state&quot;: null}</code> if nothing has been synced yet, together with <code>rev</code>, the server's revision of that document (0 when there is none). A client keeps the <code>rev</code> it last read or wrote and sends it back as <code>baseRev</code> on the next push, which lets the server refuse a write over a document the client never saw (see the 409 on PUT).</p>
+<p>Returns the caller's entire app state as one JSON blob, or <code>{&quot;state&quot;: null}</code> if nothing has been synced yet, together with <code>rev</code>, the server's revision of that document (0 when there is none). A client keeps the <code>rev</code> it last read or wrote and sends it back as <code>baseRev</code> on the next push, which lets the server refuse a write over a document the client never saw (see the 409 on PUT). Also accepts a read-only token.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
 
 
@@ -1550,7 +1678,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="ep-sum">Current revision of the caller's profile state</span>
   </summary>
   <div class="ep-body">
-<p>The <code>rev</code> that <code>GET /api/data</code> would return, without the document. Signed-in clients poll this while open and on every return to the foreground and fetch the document only when the number changed.</p>
+<p>The <code>rev</code> that <code>GET /api/data</code> would return, without the document. Signed-in clients poll this while open and on every return to the foreground and fetch the document only when the number changed. Also accepts a read-only token.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
 
 
@@ -1904,7 +2032,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </summary>
   <div class="ep-body">
 <p>The stored file, whole, from the caller's own folder only: another profile's file answers exactly like one that was never uploaded (404). The body is the file, not JSON, with headers that keep a browser from ever treating it as a page: <code>Content-Type</code> from the sniffed type (never <code>text/*</code> or SVG), <code>X-Content-Type-Options: nosniff</code>, <code>Content-Security-Policy: default-src 'none'; sandbox</code>, <code>Cross-Origin-Resource-Policy: same-origin</code>, <code>Content-Disposition: inline</code>, <code>X-Robots-Tag: noindex</code> and <code>Cache-Control: private, no-store</code>. The app keeps its own verified copy, and an HTTP-cache copy would outlive signing out.</p>
-<p>No <code>Range</code> and no <code>ETag</code>: the app downloads a file once, checks it against its hash and keeps it. A paired phone fetches with its bearer token; <code>&lt;img src&gt;</code> cannot carry one. Not throttled.</p>
+<p>No <code>Range</code> and no <code>ETag</code>: the app downloads a file once, checks it against its hash and keeps it. A paired phone fetches with its bearer token; <code>&lt;img src&gt;</code> cannot carry one. Also accepts a read-only token. Not throttled.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
 
 
@@ -3207,6 +3335,44 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-name">ok</span>
     <span class="p-type">always true</span>
     <span class="p-desc"></span>
+  </div>
+</div>
+  </div>
+</details>
+
+<details class="ep sch" id="schema-ReadToken">
+  <summary>
+    <span class="sch-name"><code>ReadToken</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">A read-only token as the list shows it, never the token itself.</span>
+  </summary>
+  <div class="ep-body">
+
+<div class="ptab">
+  <div class="prow">
+    <span class="p-name">id</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">What <code>DELETE /api/account/read-tokens?id=</code> takes.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">name</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">created</span>
+    <span class="p-type">string <span class="p-hint">(date-time)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">expires</span>
+    <span class="p-type">string <span class="p-hint">(date-time)</span> | null</span>
+    <span class="p-desc">Null for no expiry.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">lastUsed</span>
+    <span class="p-type">string <span class="p-hint">(date-time)</span> | null</span>
+    <span class="p-desc">Updated at most every ten minutes.</span>
   </div>
 </div>
   </div>

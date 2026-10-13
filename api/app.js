@@ -24,6 +24,9 @@ import {
   listPasskeys, addPasskeyRecord, renamePasskeyRecord, removePasskeyRecord, passkeyRemovalRefused, MAX_PASSKEYS
 } from './passkeys-store.js';
 import { createDeviceLink, findDeviceLink, burnDeviceLink, dropDeviceLinks } from './device-link.js';
+import {
+  isReadToken, readTokenRequest, createReadToken, listReadTokens, findReadToken, revokeReadToken, dropReadTokens
+} from './read-tokens.js';
 import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from './media.js';
 import { effectiveRoutineId } from './queue.js';
 import { stampPut } from './sync-stamps.js';
@@ -146,6 +149,7 @@ db.creds = db.creds || [];
 db.subs = db.subs || [];
 db.invites = db.invites || [];
 db.deviceLinks = db.deviceLinks || [];   // unused one-time device links, hashed (device-link.js)
+db.readTokens = db.readTokens || [];     // read-only integration tokens, hashed (read-tokens.js)
 const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
 // 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
 // the whole directory; now that the directory stays traversable, the file carries its own mode.
@@ -601,10 +605,10 @@ function cookieToken(req) {
 function sessionOf(req) {
   // The paired mobile app has no cookie jar shared with the API's origin, so it carries the same
   // signed token in an Authorization header instead — same payload, same verification below.
-  const auth = req.headers.authorization || '';
   const cookie = cookieToken(req);
-  const tok = cookie || (auth.startsWith('Bearer ') ? auth.slice(7).trim() : null);
+  const tok = cookie || bearerToken(req);
   if (!tok) return null;
+  if (!cookie && isReadToken(tok)) return readTokenSession(req, tok);
   const payload = verifySig(tok);
   if (!payload) return null;
   const [uid, exp, ver] = payload.split(':');
@@ -617,6 +621,29 @@ function sessionOf(req) {
   const claimed = ver === undefined ? 0 : Number(ver);
   if (!Number.isInteger(claimed) || claimed !== sessionVersion(user)) return null;
   return { user, exp: +exp, bearer: !cookie };
+}
+function bearerToken(req) {
+  const auth = req.headers.authorization || '';
+  return auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
+}
+// The routes a read-only token may reach. The dispatcher refuses every other one with a 403 before
+// any handler runs, and marks the request it lets through (`readTokenOk`); a read token on a
+// request without that mark is no session at all, so a route reached some other way stays closed.
+const READ_TOKEN_ROUTES = new Set(['GET /api/data', 'GET /api/data/rev', 'GET /api/media/{hash}']);
+const READ_ONLY = { error: 'this token can only read', code: 'read-only' };
+// `lastUsed` is what the owner sees in the list; written at most every ten minutes per token, the
+// same budget notePull keeps, since an integration may poll.
+function readTokenSession(req, token) {
+  if (!req.readTokenOk) return null;
+  const row = findReadToken(db, token);
+  const user = row && db.users.find(u => u.id === row.userId);
+  if (!user || user.disabled) return null;
+  const now = Date.now();
+  if (!row.lastUsed || now - Date.parse(row.lastUsed) >= PULL_NOTE_MS) {
+    row.lastUsed = new Date(now).toISOString();
+    try { saveDb(); } catch (e) { console.error('db save failed', e.message); }
+  }
+  return { user, exp: row.exp ?? Infinity, bearer: true };
 }
 function readSession(req) {
   return sessionOf(req)?.user || null;
@@ -2126,9 +2153,10 @@ const routes = {
     if (!user) return json(res, 401, { error: 'not signed in' });
     user.sv = sessionVersion(user) + 1;
     // An unredeemed pairing code is a session-in-waiting for this account; it goes too, and so
-    // does an unused device link.
+    // do an unused device link and every read-only token.
     for (const [k, v] of pairings) if (v.uid === user.id) pairings.delete(k);
     dropDeviceLinks(db, user.id);
+    dropReadTokens(db, user.id);
     saveDb();
     audit(req, 'auth.logout.all', { user });
     json(res, 200, { ok: true }, { 'Set-Cookie': clearCookie });
@@ -2166,6 +2194,39 @@ const routes = {
     }
     audit(req, 'auth.pair.ok', { user });
     json(res, 200, { token: makeSession(user), user: { id: user.id, name: user.name, admin: isAdmin(user) } });
+  },
+
+  // Read-only tokens for an outside integration (read-tokens.js), managed with a session of the
+  // profile. A read-only token never reaches these: the dispatcher refuses it first.
+  'GET /api/account/read-tokens': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return notSignedIn(res);
+    json(res, 200, { tokens: listReadTokens(db, user.id) });
+  },
+  // The token is in this answer and nowhere else; only its hash is kept.
+  'POST /api/account/read-tokens': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return notSignedIn(res);
+    const body = await readBody(req);
+    const asked = readTokenRequest(body);
+    if (asked.error) return json(res, 400, { error: asked.error, code: asked.code });
+    const made = createReadToken(db, user.id, asked);
+    if (made.error) return json(res, 409, { error: made.error, code: made.code });
+    saveDb();
+    audit(req, 'auth.readtoken.create', { user, msg: made.row.name });
+    json(res, 201, { token: made.token, readToken: made.row });
+  },
+  // `?id=` from the list. Gone from db.json before the answer, so the next request carrying the
+  // token is refused.
+  'DELETE /api/account/read-tokens': async (req, res) => {
+    const user = readSession(req);
+    if (!user) return notSignedIn(res);
+    const id = new URL(req.url, 'http://x').searchParams.get('id') || '';
+    const row = revokeReadToken(db, user.id, id);
+    if (!row) return json(res, 404, { error: 'no read-only token of this profile has that id', code: 'not-found' });
+    saveDb();
+    audit(req, 'auth.readtoken.revoke', { user, msg: row.name });
+    json(res, 200, { ok: true, tokens: listReadTokens(db, user.id) });
   },
 
   // Absent entirely while PASSWORD_LOGIN is off, so each of them is a plain 404.
@@ -2493,6 +2554,7 @@ const routes = {
     db.creds = (db.creds || []).filter(c => c.userId !== u.id);
     db.subs = (db.subs || []).filter(x => x.userId !== u.id);
     dropDeviceLinks(db, u.id);
+    dropReadTokens(db, u.id);
     presence.delete(u.id);
     // The training history and any Coach credential of theirs, both outside db.json.
     try { fs.unlinkSync(stateFile(u.id)); } catch { /* already gone */ }
@@ -2667,6 +2729,11 @@ const server = http.createServer(async (req, res) => {
   // above stays a plain lookup, and so csrfOk and the catch-all see one name for every file.
   const mm = /^\/api\/media\/([0-9a-f]{64})$/.exec(url.pathname);
   if (mm) { key = req.method + ' /api/media/{hash}'; req.mediaHash = mm[1]; }
+  // Ahead of the 404, so a read-only token learns nothing about which other routes exist.
+  if (isReadToken(bearerToken(req))) {
+    if (!READ_TOKEN_ROUTES.has(key)) return json(res, 403, READ_ONLY);
+    req.readTokenOk = true;
+  }
   const handler = routes[key];
   if (!handler) return json(res, 404, { error: 'not found' });
   if (!csrfOk(req, key)) {

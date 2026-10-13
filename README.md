@@ -108,6 +108,8 @@ if you want to try it before installing anything.
   [sync](#how-sync-works)).
 - Import from FitNotes, Strong, Hevy (CSV or API key) and Apple Health weight exports. Export
   everything as one JSON file whenever you like.
+- [Read-only tokens](#read-only-access-for-an-assistant) let an outside assistant or script read
+  your data over HTTPS without being able to change anything.
 - Share a plan as a small file or print it as a PDF.
 - Optional admin dashboard with invite-only signup and an activity log.
 - 19 languages, including right-to-left Arabic and Traditional Chinese. Exercise names and
@@ -248,6 +250,40 @@ Everything lives in `./data` on your host:
 
 Back up `./data` and you've backed up everything. Passkey private keys never reach the server; they
 stay in your phone's secure hardware or your password manager.
+
+### Read-only access for an assistant
+
+An outside integration, such as an assistant that answers questions about your training, can read
+your profile with a long-lived **read-only token** instead of your session. Each token has a name and
+an optional expiry. The server shows the token once, when it's created, and keeps only its SHA-256.
+
+There's no screen for this yet. Create, list and revoke tokens from the browser console of a
+signed-in openGym tab (same origin, so your session cookie is used):
+
+```js
+// Create one: copy `token` now, it is never shown again. Leave out expiresAt for no expiry.
+await (await fetch('/api/account/read-tokens', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ name: 'My assistant', expiresAt: '2027-01-01T00:00:00Z' }) })).json()
+// List them (never includes the token itself)
+await (await fetch('/api/account/read-tokens')).json()
+// Revoke one by its id from the list
+await (await fetch('/api/account/read-tokens?id=<id>', { method: 'DELETE' })).json()
+```
+
+The integration then sends it as a Bearer token:
+
+```bash
+curl -H "Authorization: Bearer ogr_…" https://gym.example.com/api/data       # the whole profile
+curl -H "Authorization: Bearer ogr_…" https://gym.example.com/api/data/rev   # just its revision
+```
+
+Only `GET /api/data`, `GET /api/data/rev` and `GET /api/media/{hash}` (your own photos and videos)
+accept it. Every other request carrying a read-only token is refused with `403`, so it can't write,
+create or revoke tokens, or turn itself into a session. A revoked or expired token gets `401` from
+the next request on. **Sign out everywhere** (`POST /api/logout/all`) revokes every read-only token
+of the profile too. The same applies on the Docker/Node server and the Cloudflare Worker. Behind
+Cloudflare Access, the integration also needs an Access service token, set up as for a paired phone
+([docs/MOBILE.md](docs/MOBILE.md)). The full contract is in [`api/openapi.yaml`](api/openapi.yaml).
 
 ## Documentation
 
