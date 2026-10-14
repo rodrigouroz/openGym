@@ -26,7 +26,7 @@ test('atomicWrite: bytes flushed, then the rename, then the directory', t => {
 });
 
 test('server.js and media.js write through it', () => {
-  const server = fs.readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const server = fs.readFileSync(new URL('../app.js', import.meta.url), 'utf8');
   assert.match(server, /function atomicWrite\(file, content, mode\) \{ durableWrite\(file, content, mode\); \}/);
   const media = fs.readFileSync(new URL('../media.js', import.meta.url), 'utf8');
   assert.match(media, /syncFile\(tmp\);[\s\S]*fs\.renameSync\(tmp, path\.join\(e\.dir/);

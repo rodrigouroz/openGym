@@ -161,7 +161,9 @@ test('the disclosure names the provider and the same five categories the payload
 });
 
 /* ---------- debrief + cohort routes ---------- */
-test('a debrief is enqueued as its own kind, and the cohort routes gate on the admin switch and the opt-in', async () => {
+test('a debrief is enqueued as its own kind, and the cohort routes gate on the admin switch and the opt-in', async t => {
+  // Keep the dated fixture inside its review/cohort window as the calendar advances.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 6, 21, 12) });
   fresh({ community: false });
   const jobs = await import('../coach/jobs.js');
   const { writeState, sampleState } = await import('./helpers.mjs');

@@ -38,8 +38,8 @@ function specOperations(yaml) {
 
 test('every route the server registers is in openapi.yaml, and nothing else is', () => {
   const routes = new Set([
-    ...routeKeys(read(path.join(API, 'server.js'))),
-    ...routeKeys(read(path.join(API, 'coach', 'routes.js')))
+    ...routeKeys(read(path.join(API, 'app.js'))),
+    ...routeKeys(read(path.join(API, 'coach', 'routes-service.js')))
   ]);
   const ops = new Set(specOperations(spec));
   assert.ok(routes.size > 40, `only found ${routes.size} routes — the route table moved`);
@@ -68,7 +68,7 @@ test('every tag the spec uses is one the docs generator renders', () => {
 /* The e-mail routes answer with codes a client switches on. /api/register/password answered
    `400 email-invalid` for a while with the spec listing only the password policy under 400. */
 test('every error code the e-mail and password signup routes return is in their spec entry', () => {
-  const server = read(path.join(API, 'server.js'));
+  const server = read(path.join(API, 'app.js'));
   const handler = key => {
     const start = server.indexOf(`  '${key}': async`);
     assert.ok(start >= 0, key);

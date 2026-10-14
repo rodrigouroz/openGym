@@ -7,6 +7,7 @@ on:
     paths:
       - 'frontend/**'
       - 'api/**'
+      - 'cloudflare/**'
       - 'mcp/**'
       - 'scripts/build-coach-assets.mjs'
       - 'scripts/build-coach-library.mjs'
@@ -15,10 +16,12 @@ on:
       - 'api/coach/prompts/**'
       - '.github/workflows/test.yml'
   push:
-    branches: [main, coach]
+    # Fork validation branch; no publishing workflow is enabled by this trigger.
+    branches: [main, coach, feat/cloudflare-workers]
     paths:
       - 'frontend/**'
       - 'api/**'
+      - 'cloudflare/**'
       - 'mcp/**'
       - 'scripts/build-coach-assets.mjs'
       - 'scripts/build-coach-library.mjs'
@@ -180,3 +183,19 @@ jobs:
           # canDropPrivileges() fails closed, so a missing `coach` user disables every job —
           # including the fixture provider. Cheaper to assert here than to discover on an instance.
           docker run --rm opengym-api:default id coach
+
+  cloudflare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare/package-lock.json
+      - run: npm ci --prefix api --omit=optional
+      - run: npm ci --prefix frontend
+      - run: npm ci --prefix cloudflare
+      - run: npm run build --prefix frontend
+      - run: node scripts/catalogue/stage-media.mjs frontend/dist
+      - run: npm test --prefix cloudflare

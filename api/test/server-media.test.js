@@ -468,7 +468,7 @@ test('a trickled body is cut after the body deadline on every route but a signed
 });
 
 test('server.js gives a slow upload half an hour, not node\'s default five minutes', () => {
-  const src = fs.readFileSync(path.join(API, 'server.js'), 'utf8');
+  const src = fs.readFileSync(path.join(API, 'app.js'), 'utf8');
   const m = /^server\.requestTimeout\s*=\s*([\d_\s*]+);/m.exec(src);
   assert.ok(m, 'server.requestTimeout is set');
   const ms = m[1].split('*').reduce((a, x) => a * Number(x.replace(/[_\s]/g, '')), 1);

@@ -792,3 +792,27 @@ describe('AdminCoach — readiness and the step count', () => {
     expect(btn('Add API key')).toBeTruthy()
   })
 })
+
+
+it('offers a server binding provider without a credential step', async () => {
+  mocks.routes['/api/admin/coach'] = status({
+    provider: 'workers-ai', auth: { state: 'not-required' },
+    providers: [...PROVIDERS, { id: 'workers-ai', label: 'Workers AI', binding: true }],
+  })
+  await mount()
+  expect(chip('Workers AI')).toBeTruthy()
+  await tap(chip('Workers AI'))
+  expect(sent('/api/admin/coach/config').at(-1).body).toEqual({ provider: 'workers-ai' })
+  expect(btn('Add API key')).toBeUndefined()
+  expect(host.textContent).toContain('No API key is needed')
+})
+
+
+it('shows the lifetime AI allowance, uncertain reservations and manual top-up warning', async () => {
+  mocks.routes['/api/admin/coach'] = status({ aiBudget: { totalMicros: 5000000, remainingMicros: 100000,
+    spentMicros: 4800000, reservedMicros: 100000, low: true, automaticTopUp: false } })
+  await mount()
+  expect(host.textContent).toContain('$0.10 remaining of $5.00 total')
+  expect(host.textContent).toContain('Reserved or uncertain: $0.1000')
+  expect(host.querySelector('[role="alert"]').textContent).toContain('Top-up approval needed')
+})

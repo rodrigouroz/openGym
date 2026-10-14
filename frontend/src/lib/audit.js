@@ -49,6 +49,9 @@ const LABELS = {
   'auth.link.create': 'Made a one-time code for another device',
   'auth.link.ok': 'Added a device with a one-time code',
   'auth.link.fail': 'Adding a device with a code failed',
+  // Read-only tokens for an outside integration; `msg` is the name the profile gave the token.
+  'auth.readtoken.create': 'Made a read-only token',
+  'auth.readtoken.revoke': 'Revoked a read-only token',
   // The owner's proof (current password or a passkey) for one of the changes below was refused.
   'auth.proof.fail': 'Confirming a change failed',
   // The password throttle paused an address; `msg` says for what (password, signup).

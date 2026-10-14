@@ -542,7 +542,10 @@ export function build(S, opts = {}) {
     }
     if (opts.cohort) p.cohort = cleanCohort(opts.cohort);
   } else if (opts.kind === 'review') {
-    const workouts = reviewWindow(S, coach.lastReview?.at ? String(coach.lastReview.at).slice(0, 10) : null);
+    // The app stores epoch milliseconds; older exports may carry an ISO date.
+    // Compare calendar dates, never the leading digits of a millisecond timestamp.
+    const lastReview = new Date(coach.lastReview?.at ?? NaN);
+    const workouts = reviewWindow(S, Number.isFinite(lastReview.getTime()) ? iso(lastReview) : null);
     const detailFrom = Math.max(0, workouts.length - FULL_DETAIL_SESSIONS);
     p.window = {
       from: day(workouts[0]?.d),

@@ -27,6 +27,26 @@ info:
     sent to it. Its routes set exactly the same cookie. With the flag off (the default)
     every one of them answers 404.
 
+    ### Read-only tokens
+    For an outside integration (an assistant, a script) that only needs to *read* a
+    profile, a signed-in profile can make long-lived **read-only tokens**
+    (`/api/account/read-tokens`), each with a name and an optional expiry. A token looks
+    like `ogr_<43 base64url characters>`, is shown once at creation and is stored only as
+    a SHA-256. Sent as `Authorization: Bearer ogr_…`, it is accepted by exactly three
+    operations: `GET /api/data`, `GET /api/data/rev` and `GET /api/media/{hash}`. Every
+    other method and path, unknown ones included, answers
+    `403 {"error": "this token can only read", "code": "read-only"}` before any route
+    runs, so a read-only token can neither write, nor make, list or revoke tokens, nor
+    renew itself into a session. A revoked, expired or unknown token is
+    `401 {"error": "not signed in"}` on the three operations above; revoking one, or
+    `POST /api/logout/all`, takes effect on the next request. Session cookies and the
+    paired app's Bearer session token are unaffected.
+
+    On a deployment behind Cloudflare Access (`docs/SELF_HOSTING_CLOUDFLARE.md`), Access
+    still sits in front of the API: the integration also needs an Access service token
+    (`CF-Access-Client-Id` / `CF-Access-Client-Secret`) allowed by a Service Auth policy,
+    the same setup a paired phone uses (`docs/MOBILE.md`).
+
     ### Throttling
     The `password` routes are counted per client address: at most 60 requests a minute
     across them, and wrong answers (a password, a reset code, an invite code on password
@@ -552,7 +572,7 @@ paths:
         Bearer token ever issued for it, on every device, including a copy someone
         walked off with. Passkeys are untouched; signing back in works immediately.
         Also clears the caller's own cookie. Unredeemed pairing codes for the account
-        are voided too.
+        are voided too, and every read-only token of the account is revoked.
       responses:
         '200':
           description: All sessions revoked.
@@ -632,6 +652,123 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: "invalid or expired code", code: "pair-invalid" }
+
+  /api/account/read-tokens:
+    get:
+      tags: [auth]
+      operationId: listReadTokens
+      summary: This profile's read-only tokens
+      description: >-
+        Every live read-only token of the caller's profile (see *Read-only tokens* above),
+        without the token or its hash. Expired tokens are not listed: they can never work
+        again. `lastUsed` is updated at most every ten minutes per token.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      responses:
+        '200':
+          description: The list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReadToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadOnly' }
+    post:
+      tags: [auth]
+      operationId: createReadToken
+      summary: Make a read-only token
+      description: |
+        Returns the token **once**, in `token`; only its SHA-256 is stored, so it cannot be
+        shown again. Without `expiresAt` it is good until revoked, or until the profile signs
+        out everywhere. At most 20 live tokens per profile. Audited as
+        `auth.readtoken.create` with the token's name.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  maxLength: 60
+                  description: What the token is for, as the list shows it (trimmed).
+                expiresAt:
+                  oneOf: [{ type: string, format: date-time }, { type: 'null' }]
+                  description: >-
+                    When the token stops working. In the future and at most ten years away;
+                    absent or null for no expiry.
+            example: { name: "My assistant", expiresAt: "2027-01-01T00:00:00.000Z" }
+      responses:
+        '201':
+          description: Made. The token is in this answer and nowhere else.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    description: '`ogr_` and 43 base64url characters. Send it as `Authorization: Bearer <token>`.'
+                  readToken: { $ref: '#/components/schemas/ReadToken' }
+              example:
+                token: "ogr_q8Vn1dK3…"
+                readToken: { id: "pQ3x9Lk2aB7c", name: "My assistant", created: "2026-10-13T21:00:00.000Z", expires: "2027-01-01T00:00:00.000Z", lastUsed: null }
+        '400':
+          description: >-
+            `name-required` (missing or blank), `name-too-long` (over 60 characters) or
+            `expiry-invalid` (not a date-time, in the past, or more than ten years away).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: "a name is required", code: "name-required" }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadOnly' }
+        '409':
+          description: The profile already has 20 live read-only tokens.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: "a profile can have at most 20 read-only tokens", code: "read-token-limit" }
+    delete:
+      tags: [auth]
+      operationId: revokeReadToken
+      summary: Revoke a read-only token
+      description: >-
+        Removes it from storage before answering, so the next request carrying it is
+        refused with 401. Audited as `auth.readtoken.revoke` with the token's name.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: The token's `id` from the list.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Revoked. The list as it is now.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  tokens:
+                    type: array
+                    items: { $ref: '#/components/schemas/ReadToken' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ReadOnly' }
+        '404':
+          description: No read-only token of this profile has that id.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: "no read-only token of this profile has that id", code: "not-found" }
 
   /api/login/password:
     post:
@@ -1421,6 +1558,8 @@ paths:
         that document (0 when there is none). A client keeps the `rev` it last read or
         wrote and sends it back as `baseRev` on the next push, which lets the server
         refuse a write over a document the client never saw (see the 409 on PUT).
+        Also accepts a read-only token.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }, { readTokenAuth: [] }]
       responses:
         '200':
           description: The stored state, or null, and its revision.
@@ -1565,7 +1704,8 @@ paths:
       description: |
         The `rev` that `GET /api/data` would return, without the document. Signed-in clients poll
         this while open and on every return to the foreground and fetch the document only when
-        the number changed.
+        the number changed. Also accepts a read-only token.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }, { readTokenAuth: [] }]
       responses:
         '200':
           description: The current revision (0 when the profile has no state yet).
@@ -1601,7 +1741,8 @@ paths:
 
         No `Range` and no `ETag`: the app downloads a file once, checks it against its hash and
         keeps it. A paired phone fetches with its bearer token; `<img src>` cannot carry one.
-        Not throttled.
+        Also accepts a read-only token. Not throttled.
+      security: [{ cookieAuth: [] }, { bearerAuth: [] }, { readTokenAuth: [] }]
       responses:
         '200':
           description: The file.
@@ -2972,6 +3113,14 @@ components:
         The same signed session token, carried as `Authorization: Bearer <token>` by
         the paired mobile app (obtained from `POST /api/pair/redeem`). Bearer requests
         skip the CSRF origin check; a browser never attaches this header on its own.
+    readTokenAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        A read-only token (`ogr_…`, from `POST /api/account/read-tokens`) as
+        `Authorization: Bearer <token>`. Accepted only by `GET /api/data`,
+        `GET /api/data/rev` and `GET /api/media/{hash}`; any other request carrying one is
+        `403 read-only`.
 
   responses:
     Unauthorized:
@@ -2986,6 +3135,15 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
           example: { error: "forbidden" }
+    ReadOnly:
+      description: >-
+        The request carries a read-only token (`Authorization: Bearer ogr_…`), which only
+        `GET /api/data`, `GET /api/data/rev` and `GET /api/media/{hash}` accept. Every other
+        method and path answers this, whether or not the token is valid.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: "this token can only read", code: "read-only" }
     CoachOff:
       description: >-
         The Coach is not set up on this instance (switched off, or no provider connected).
@@ -3121,6 +3279,16 @@ components:
       type: object
       properties:
         ok: { type: boolean, const: true }
+
+    ReadToken:
+      type: object
+      description: A read-only token as the list shows it, never the token itself.
+      properties:
+        id: { type: string, description: 'What `DELETE /api/account/read-tokens?id=` takes.' }
+        name: { type: string }
+        created: { type: string, format: date-time }
+        expires: { oneOf: [{ type: string, format: date-time }, { type: 'null' }], description: Null for no expiry. }
+        lastUsed: { oneOf: [{ type: string, format: date-time }, { type: 'null' }], description: 'Updated at most every ten minutes.' }
 
     PasskeyList:
       type: object

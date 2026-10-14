@@ -80,3 +80,12 @@ export function sampleState(over = {}) {
     ...over
   };
 }
+
+
+/** Enough recent history for a review proposal; sparse-history tests use sampleState. */
+export function reviewState(over = {}) {
+  const state = sampleState();
+  state.workouts = [14, 7, 0].map((days, i) => ({ ...structuredClone(state.workouts[0]), id: 'w' + (i + 1),
+    d: new Date(Date.now() - days * 86400000).toISOString().slice(0, 10) }));
+  return { ...state, ...over };
+}

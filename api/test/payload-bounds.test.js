@@ -160,7 +160,9 @@ test('every plan, log and id field is bounded too, for a create, a review and a 
   }
 });
 
-test('an id is cut, a policy outside the engine\'s five and a number that is not one read as absent', () => {
+test('an id is cut, a policy outside the engine\'s five and a number that is not one read as absent', t => {
+  // Keep the dated fixture inside its review/cohort window as the calendar advances.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 6, 21, 12) });
   const S = sampleState();
   S.routines[0].id = 'r'.repeat(500);
   S.routines[0].prog = 'linear; and also...';
@@ -184,7 +186,9 @@ test('an id is cut, a policy outside the engine\'s five and a number that is not
   assert.equal(set.r, 10, 'the rest of the set still travels');
 });
 
-test('the plan and the log a real app writes pass through exactly as before', () => {
+test('the plan and the log a real app writes pass through exactly as before', t => {
+  // Keep the dated fixture inside its review/cohort window as the calendar advances.
+  t.mock.timers.enable({ apis: ['Date'], now: Date.UTC(2026, 6, 21, 12) });
   const S = sampleState();
   S.routines[0].ex[0].sg = 'sg-0-1';
   S.routines[0].ex[1].sg = 'sg-0-1';
