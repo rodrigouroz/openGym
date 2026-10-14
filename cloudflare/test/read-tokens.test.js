@@ -73,7 +73,8 @@ test('real Workers runtime: read-only tokens read, are refused everything else, 
   for (const key of refused) {
     const [method, path] = key.split(' ');
     const r = await req(method, path.replace('{hash}', hash), { token,
-      body: method === 'GET' ? undefined : { state: { unit: 'lb' }, baseRev: 1, name: 'x' } });
+      body: method === 'GET' ? undefined : { state: { unit: 'lb' }, baseRev: 1, name: 'x' } })
+      .catch(e => { throw new Error(key + ': ' + e.message + ' / ' + e.cause?.message, { cause: e }); });
     assert.equal(r.status, 403, `${key} answered ${r.status}`);
     assert.equal(r.body.code, 'read-only', key);
   }

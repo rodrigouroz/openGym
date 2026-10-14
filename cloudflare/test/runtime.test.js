@@ -29,6 +29,14 @@ test('real Workers runtime: passkeys, first admin, sessions, large state, confli
   assert.equal((await req('GET', '/api/health')).status, 200);
   assert.equal((await req('GET', '/api/data')).status, 401);
   assert.equal((await req('PUT', '/api/data', { state: {} }, null, { Origin: 'https://evil.example' })).status, 403);
+  // Refusals decided before any route reads the body arrive as answers, not as cut connections.
+  const big = { pad: 'x'.repeat(1024 * 1024) };
+  const refusals = await Promise.all(Array.from({ length: 24 }, (_, i) => [
+    () => req('POST', '/api/nope', big),
+    () => req('POST', '/api/coach/forget', big, null, { Origin: 'https://evil.example' }),
+    () => req('POST', '/api/coach/forget', big, null, { Authorization: 'Bearer ogr_x' })
+  ][i % 3]()));
+  assert.deepEqual(refusals.map(r => r.status), Array.from({ length: 24 }, (_, i) => [404, 403, 403][i % 3]));
   async function register(name) {
     const key = softPasskey();
     const opts = await req('POST', '/api/register/options', { name });

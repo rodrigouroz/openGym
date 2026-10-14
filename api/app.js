@@ -2691,6 +2691,19 @@ function bodyDeadline(req) {
   req.allowSlowBody = clear;
 }
 
+// A refusal decided before any route reads the body. Under the Workers runtime's node:http bridge,
+// answering while the body is still arriving often cuts the connection (EPIPE on the client)
+// instead of delivering the answer, so the body is read and thrown away first, up to the same
+// twice-the-cap that readBody tolerates before it hangs up.
+function answerAfterBody(req, res, code, obj) {
+  if (req.readableEnded) return json(res, code, obj);
+  let size = 0;
+  req.on('data', d => { size += d.length; if (size > 2 * MAX_BODY) req.destroy(); });
+  req.on('error', () => {});
+  req.once('end', () => json(res, code, obj));
+  req.resume();
+}
+
 // The Capacitor WebView origins of the Android and iOS app.
 const APP_ORIGINS = new Set(['https://localhost', 'capacitor://localhost', 'http://localhost']);
 
@@ -2731,17 +2744,17 @@ const server = http.createServer(async (req, res) => {
   if (mm) { key = req.method + ' /api/media/{hash}'; req.mediaHash = mm[1]; }
   // Ahead of the 404, so a read-only token learns nothing about which other routes exist.
   if (isReadToken(bearerToken(req))) {
-    if (!READ_TOKEN_ROUTES.has(key)) return json(res, 403, READ_ONLY);
+    if (!READ_TOKEN_ROUTES.has(key)) return answerAfterBody(req, res, 403, READ_ONLY);
     req.readTokenOk = true;
   }
   const handler = routes[key];
-  if (!handler) return json(res, 404, { error: 'not found' });
+  if (!handler) return answerAfterBody(req, res, 404, { error: 'not found' });
   if (!csrfOk(req, key)) {
     // Logged, not audited: this is reachable without a session, and an audit entry per attempt
     // would let anyone fill the log. An operator who has genuinely mis-set ORIGIN needs to see
     // the mismatch, and the container log is where they will look.
     console.warn('refused cross-origin', key, 'origin=' + req.headers.origin, 'expected=' + ORIGIN);
-    return json(res, 403, { error: 'cross-origin request refused' });
+    return answerAfterBody(req, res, 403, { error: 'cross-origin request refused' });
   }
   // After the origin check, so a forged request spends nobody's budget. The password routes only
   // (see the sign-in throttle above).
