@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### API
+
+- **Resolved data view for read tokens**: `GET /api/data` now accepts `?resolve=1` (or 
+  `?include=catalogue`) to return fully resolved exercise data in one call. The `resolved` 
+  object includes exercise names, muscles, equipment, detailed workout/routine information, 
+  and merged custom exercises without requiring separate ID lookups. Custom exercises are 
+  marked with `custom: true`; unknown IDs with `missing: true`. The `state` field remains 
+  unchanged for backward compatibility. For read-only tokens, sensitive data (`gymCards`) 
+  is filtered from the state. This enables external integrations (health bots, assistants) 
+  to access complete workout data without maintaining the full exercise catalogue or performing 
+  client-side ID resolution.
+
 ## v1.4.1 (2026-10-10)
 
 Bug fixes for v1.4.0, mostly the things you told us about on Discord and GitHub.

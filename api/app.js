@@ -3,6 +3,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import https from 'node:https';
 import dns from 'node:dns';
 import net from 'node:net';
@@ -151,6 +152,15 @@ db.invites = db.invites || [];
 db.deviceLinks = db.deviceLinks || [];   // unused one-time device links, hashed (device-link.js)
 db.readTokens = db.readTokens || [];     // read-only integration tokens, hashed (read-tokens.js)
 const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
+
+// Load the exercise catalogue for resolved data views
+let CATALOGUE = { exercises: {}, aliases: {} };
+try {
+  const catalogueRaw = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'catalogue.json'), 'utf8');
+  CATALOGUE = JSON.parse(catalogueRaw);
+} catch (e) {
+  console.warn('catalogue.json not found or invalid, resolved exercise data will be incomplete:', e.message);
+}
 // 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
 // the whole directory; now that the directory stays traversable, the file carries its own mode.
 // Once the new version is on disk, a second copy of it goes to db.json.bak, the same durable
@@ -200,6 +210,258 @@ function forClient(S) {
   if (!S || typeof S !== 'object' || !('_unstamped' in S || '_prior' in S)) return S;
   const { _unstamped, _prior, ...rest } = S;
   return rest;
+}
+
+// Helper functions for resolved data views
+
+function isWarmupRow(set) {
+  const source = set && typeof set === 'object' && !Array.isArray(set) ? set : {};
+  if (source.phase != null && source.phase !== '') {
+    const token = typeof source.phase === 'string' ? source.phase.trim().toLowerCase() : '';
+    if (token === 'warmup' || token === 'warm-up' || token === 'warm_up') return true;
+  }
+  return source.warmup === true;
+}
+
+function isFailureSet(set) {
+  const source = set && typeof set === 'object' && !Array.isArray(set) ? set : {};
+  return source.failure === true && !isWarmupRow(source);
+}
+
+function resolveExercise(id, S, ALIASES) {
+  // Resolve alias first
+  const resolvedId = ALIASES[id] || id;
+  
+  const custom = (S.customEx || []).find(ex => ex.id === resolvedId);
+  if (custom) {
+    return {
+      id: resolvedId,
+      name: custom.n || custom.name || resolvedId,
+      bodyPart: custom.bp || null,
+      equipment: custom.eq || null,
+      primaryMuscles: custom.primaries || [],
+      secondaryMuscles: custom.secondaries || custom.sm || [],
+      category: custom.cat || null,
+      custom: true
+    };
+  }
+  const catalogueEx = CATALOGUE.exercises?.[resolvedId];
+  if (catalogueEx) {
+    return {
+      id: resolvedId,
+      name: catalogueEx.name,
+      bodyPart: catalogueEx.bodyPart,
+      equipment: catalogueEx.equipment,
+      primaryMuscles: catalogueEx.primaryMuscles,
+      secondaryMuscles: catalogueEx.secondaryMuscles,
+      category: catalogueEx.category
+    };
+  }
+  return { id: resolvedId, missing: true };
+}
+
+function collectExerciseIds(S) {
+  const ids = new Set();
+  (S.workouts || []).forEach(w => {
+    if (!w || typeof w !== 'object') return;
+    (w.entries || []).forEach(e => { if (e && e.id) ids.add(e.id); });
+  });
+  (S.routines || []).forEach(r => {
+    if (!r || typeof r !== 'object') return;
+    (r.ex || []).forEach(s => { if (s && s.id) ids.add(s.id); });
+  });
+  // dayPlan is an object {date: routineId}, week is {day: [routineIds]}
+  if (S.dayPlan && typeof S.dayPlan === 'object') {
+    Object.values(S.dayPlan).forEach(rid => {
+      if (rid) {
+        const routine = (S.routines || []).find(r => r && r.id === rid);
+        if (routine && routine.ex) {
+          routine.ex.forEach(s => { if (s && s.id) ids.add(s.id); });
+        }
+      }
+    });
+  }
+  if (S.week && typeof S.week === 'object') {
+    Object.values(S.week).forEach(rids => {
+      if (Array.isArray(rids)) {
+        rids.forEach(rid => {
+          if (!rid) return;
+          const routine = (S.routines || []).find(r => r && r.id === rid);
+          if (routine && routine.ex) {
+            routine.ex.forEach(s => { if (s && s.id) ids.add(s.id); });
+          }
+        });
+      }
+    });
+  }
+  if (S.queue && typeof S.queue === 'object') {
+    Object.values(S.queue).forEach(item => {
+      if (item && item.id) ids.add(item.id);
+    });
+  }
+  Object.keys(S.exNotes || {}).forEach(id => ids.add(id));
+  Object.keys(S.exWeights || {}).forEach(id => ids.add(id));
+  (S.favEx || []).forEach(id => ids.add(id));
+  return ids;
+}
+
+function resolveWorkouts(S, unit, ALIASES) {
+  return (S.workouts || []).filter(w => w && typeof w === 'object').map(w => {
+    const entries = (w.entries || []).filter(e => e && typeof e === 'object').map(e => {
+      const ex = resolveExercise(e.id, S, ALIASES);
+      const sets = (e.sets || []).filter(s => s && typeof s === 'object').map(s => {
+        const out = {
+          w: Number(s.w) || 0,
+          r: Number(s.r) || 0,
+          done: !!s.done
+        };
+        // Conserve all set fields
+        if (s.sec != null) out.sec = Number(s.sec);
+        if (s.min != null) out.min = Number(s.min);
+        if (s.speed != null) out.speed = Number(s.speed);
+        if (s.dist != null) out.dist = Number(s.dist);
+        if (s.sides) out.sides = s.sides;
+        if (s.at != null) out.at = s.at;
+        if (isWarmupRow(s)) out.warmup = true;
+        if (isFailureSet(s)) out.failure = true;
+        // Include both rpe and rir if they exist, regardless of effort scale
+        if (s.rpe != null) out.rpe = Number(s.rpe);
+        if (s.rir != null) out.rir = Number(s.rir);
+        if (s.note) out.note = s.note;
+        return out;
+      });
+      return {
+        exercise: {
+          id: e.id,
+          name: ex.name || ex.id,
+          bodyPart: ex.bodyPart || null,
+          equipment: ex.equipment || null,
+          primaryMuscles: ex.primaryMuscles || [],
+          secondaryMuscles: ex.secondaryMuscles || []
+        },
+        sets,
+        ...(e.topW != null ? { topW: e.topW } : {}),
+        ...(e.target ? { target: e.target } : {}),
+        ...(e.planned != null ? { planned: e.planned } : {}),
+        ...(e.rid ? { rid: e.rid } : {}),
+        ...(e.note ? { note: e.note } : {})
+      };
+    });
+    return {
+      ...(w.id ? { id: w.id } : {}),
+      date: w.d,
+      ...(w.start ? { start: w.start } : {}),
+      ...(w.end ? { end: w.end } : {}),
+      ...(w.name ? { name: w.name } : {}),
+      ...(w.bw != null ? { bw: w.bw } : {}),
+      ...(w.prs ? { prs: w.prs } : {}),
+      ...(w.vol != null ? { vol: w.vol } : {}),
+      ...(w.routineIds ? { routineIds: w.routineIds } : {}),
+      ...(w.routineId ? { routineId: w.routineId } : {}),
+      ...(w.note ? { note: w.note } : {}),
+      ...(w.label ? { label: w.label } : {}),
+      entries,
+      unit
+    };
+  });
+}
+
+function resolveRoutines(S, ALIASES) {
+  return (S.routines || []).filter(r => r && typeof r === 'object' && r.id).map(r => {
+    const slots = (r.ex || []).filter(s => s && typeof s === 'object').map(s => {
+      const ex = resolveExercise(s.id, S, ALIASES);
+      return {
+        exercise: {
+          id: s.id,
+          name: ex.name || ex.id,
+          bodyPart: ex.bodyPart || null,
+          equipment: ex.equipment || null,
+          primaryMuscles: ex.primaryMuscles || [],
+          secondaryMuscles: ex.secondaryMuscles || []
+        },
+        ...(s.sets != null ? { sets: s.sets } : {}),
+        ...(s.mode ? { mode: s.mode } : {}),
+        ...(s.repsMin != null ? { repsMin: s.repsMin } : {}),
+        ...(s.reps != null ? { reps: s.reps } : {}),
+        ...(s.prog ? { prog: s.prog } : {}),
+        ...(s.lastToFailure != null ? { lastToFailure: s.lastToFailure } : {}),
+        ...(s.restSec != null ? { restSec: s.restSec } : {}),
+        ...(s.sec != null ? { sec: s.sec } : {}),
+        ...(s.side ? { side: s.side } : {}),
+        ...(s.note ? { note: s.note } : {})
+      };
+    });
+    return {
+      id: r.id,
+      name: r.name,
+      ex: slots,
+      ...(r.note ? { note: r.note } : {})
+    };
+  });
+}
+
+function resolveExNotes(S, ALIASES) {
+  const notes = {};
+  for (const [id, note] of Object.entries(S.exNotes || {})) {
+    if (!note) continue;
+    const ex = resolveExercise(id, S, ALIASES);
+    notes[id] = {
+      name: ex.name || ex.id,
+      note
+    };
+  }
+  return notes;
+}
+
+function resolveExWeights(S, ALIASES) {
+  const weights = {};
+  for (const [id, data] of Object.entries(S.exWeights || {})) {
+    if (!data || typeof data !== 'object') continue;
+    const ex = resolveExercise(id, S, ALIASES);
+    weights[id] = {
+      name: ex.name || ex.id,
+      w: data.w,
+      d: data.d
+    };
+  }
+  return weights;
+}
+
+function buildResolvedData(S, isReadToken) {
+  const unit = S.unit || 'kg';
+  const effortScale = S.effort || 'rir';
+  const ALIASES = CATALOGUE.aliases || {};
+  
+  const ids = collectExerciseIds(S);
+  (S.customEx || []).forEach(ex => ids.add(ex.id));
+  
+  const exercises = {};
+  for (const id of ids) {
+    exercises[id] = resolveExercise(id, S, ALIASES);
+  }
+  
+  const resolved = {
+    exercises,
+    workouts: resolveWorkouts(S, unit, ALIASES),
+    routines: resolveRoutines(S, ALIASES),
+    exNotes: resolveExNotes(S, ALIASES),
+    exWeights: resolveExWeights(S, ALIASES),
+    dayPlan: S.dayPlan || {},
+    week: S.week || {},
+    bodyweight: S.bodyweight || [],
+    targetW: S.targetW,
+    dayNotes: S.dayNotes || {},
+    measurements: S.measurements || {},
+    customMeasurements: S.customMeasurements || {},
+    meta: {
+      catalogueVersion: Object.keys(CATALOGUE.exercises || {}).length,
+      unit,
+      effortScale,
+      generatedAt: new Date().toISOString()
+    }
+  };
+  
+  return resolved;
 }
 // An entry is an object a reader can dereference, and `records` is every entry of a stored
 // list. PUT /api/data drops the rest on the way in — a null workout, a routine that is a
@@ -2247,7 +2509,24 @@ const routes = {
     const state = readStateStrict(user.id);
     if (state === UNREADABLE) { console.error('state file unreadable for', user.id); return json(res, 503, { error: 'state unreadable' }); }
     notePull(user);
-    json(res, 200, { state: forClient(state), rev: state?._rev || 0 });
+    
+    const url = new URL(req.url, 'http://x');
+    const shouldResolve = url.searchParams.get('resolve') === '1' || url.searchParams.get('include') === 'catalogue';
+    const isReadToken = req.readTokenOk === true;
+    
+    let clientState = forClient(state);
+    
+    if (isReadToken && clientState && typeof clientState === 'object' && clientState.gymCards) {
+      const { gymCards, ...rest } = clientState;
+      clientState = rest;
+    }
+    
+    if (shouldResolve && clientState && typeof clientState === 'object') {
+      const resolved = buildResolvedData(state, isReadToken);
+      json(res, 200, { state: clientState, rev: state?._rev || 0, resolved });
+    } else {
+      json(res, 200, { state: clientState, rev: state?._rev || 0 });
+    }
   },
   // Just the revision: the client asks this every half minute while it is open and on every
   // return to the foreground, and fetches the document only when the number moved — a signed-in

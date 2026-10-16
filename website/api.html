@@ -1594,14 +1594,26 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </summary>
   <div class="ep-body">
 <p>Returns the caller's entire app state as one JSON blob, or <code>{&quot;state&quot;: null}</code> if nothing has been synced yet, together with <code>rev</code>, the server's revision of that document (0 when there is none). A client keeps the <code>rev</code> it last read or wrote and sends it back as <code>baseRev</code> on the next push, which lets the server refuse a write over a document the client never saw (see the 409 on PUT). Also accepts a read-only token.</p>
+<p>With <code>?resolve=1</code> or <code>?include=catalogue</code>, the response includes an additional <code>resolved</code> object containing fully resolved exercise data: exercise names, muscles, equipment, and detailed workout/routine information without requiring separate ID lookups. Custom exercises are merged and marked with <code>custom: true</code>; unknown IDs are marked with <code>missing: true</code>. The <code>state</code> field remains unchanged for backward compatibility. For read-only tokens, <code>gymCards</code> is filtered from the state in the resolved view.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
-
+<p class="ep-h">Query parameters</p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">resolve</span>
+    <span class="p-type">&quot;1&quot;</span>
+    <span class="p-desc">When set to &quot;1&quot;, includes a <code>resolved</code> object with fully resolved exercise data (names, muscles, equipment) and detailed workout/routine information.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">include</span>
+    <span class="p-type">&quot;catalogue&quot;</span>
+    <span class="p-desc">When set to &quot;catalogue&quot;, includes a <code>resolved</code> object (same as <code>resolve=1</code>).</span>
+  </div>
+</div>
 
     <p class="ep-h">Responses</p>
     <div class="ptab">
   <div class="prow rrow">
     <span class="r-code s2">200</span>
-    <span class="p-desc">The stored state, or null, and its revision.<span class="r-sig">{ state: <a href="#schema-State">State</a> | null, rev: integer }</span></span>
+    <span class="p-desc">The stored state, or null, and its revision.<span class="r-sig">{ state: <a href="#schema-State">State</a> | null, rev: integer, resolved: object }</span></span>
   </div>
   <div class="prow rrow">
     <span class="r-code s4">401</span>
