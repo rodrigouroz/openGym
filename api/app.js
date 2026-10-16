@@ -3,7 +3,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import https from 'node:https';
 import dns from 'node:dns';
 import net from 'node:net';
@@ -32,11 +31,15 @@ import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from 
 import { effectiveRoutineId } from './queue.js';
 import { stampPut } from './sync-stamps.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
+// Bundled into the Worker by Wrangler; loaded from disk beside app.js under Docker/Node.
+// Do not read this via the injectable `fs` — on Cloudflare that is Durable Object storage,
+// which never contains catalogue.json, so ?resolve=1 would ship an empty exercise map.
+import bundledCatalogue from './catalogue.json' with { type: 'json' };
 
 // The runtime owns persistence and optional background services. Docker supplies the
 // existing filesystem and Coach; a Worker supplies durable synchronous document storage.
 export function createApiServer({ fs, durableWrite, env = process.env, coachConfig, coachJobs,
-  coachRoutes, startCadence, startWarmup, background = true, mediaStorage = {}, pushTransport = webpush, checkPushEndpoint = () => null, durableRestTimers }) {
+  coachRoutes, startCadence, startWarmup, background = true, mediaStorage = {}, pushTransport = webpush, checkPushEndpoint = () => null, durableRestTimers, catalogue }) {
 const backgroundTasks = [];
 const setInterval = background ? globalThis.setInterval : (fn, ms) => {
   backgroundTasks.push({ fn, ms, last: 0 }); return { unref() {} };
@@ -153,14 +156,9 @@ db.deviceLinks = db.deviceLinks || [];   // unused one-time device links, hashed
 db.readTokens = db.readTokens || [];     // read-only integration tokens, hashed (read-tokens.js)
 const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
 
-// Load the exercise catalogue for resolved data views
-let CATALOGUE = { exercises: {}, aliases: {} };
-try {
-  const catalogueRaw = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'catalogue.json'), 'utf8');
-  CATALOGUE = JSON.parse(catalogueRaw);
-} catch (e) {
-  console.warn('catalogue.json not found or invalid, resolved exercise data will be incomplete:', e.message);
-}
+// Exercise catalogue for GET /api/data?resolve=1. Prefer an explicit inject (tests); otherwise
+// the JSON module import above — same object under Node and in the Worker bundle.
+const CATALOGUE = catalogue && typeof catalogue === 'object' ? catalogue : bundledCatalogue;
 // 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
 // the whole directory; now that the directory stays traversable, the file carries its own mode.
 // Once the new version is on disk, a second copy of it goes to db.json.bak, the same durable
