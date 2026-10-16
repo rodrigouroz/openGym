@@ -21,7 +21,7 @@ test('every root-level module server.js needs is on the Dockerfile COPY line', (
   assert.ok(line, 'the COPY line that carries server.js');
   const copied = new Set(line.trim().split(/\s+/).slice(1, -1));
 
-  const needed = new Set(['server.js']);
+  const needed = new Set(['server.js', 'catalogue.json']);
   const queue = ['server.js'];
   while (queue.length) {
     for (const dep of rootImports(read(queue.shift()))) {

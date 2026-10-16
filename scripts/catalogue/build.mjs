@@ -70,6 +70,24 @@ for (const e of exercises) {
 }
 files['frontend/src/lib/exercise-muscle-map.json'] = JSON.stringify(muscleMap, null, 1) + '\n'
 
+// Compact catalogue for the API: name, muscles, equipment, etc. merged with muscleMap corrections
+const apiCatalogue = {}
+for (const e of exercises.filter(ex => !ex.variantOf)) {
+  const map = muscleMap[e.id]
+  apiCatalogue[e.id] = {
+    name: e.name,
+    bodyPart: map?.bp || e.bodyPart,
+    equipment: e.equipment,
+    target: e.target,
+    primaryMuscles: map?.primaries || [e.target],
+    secondaryMuscles: map?.secondaries || e.secondaryMuscles,
+    category: e.category || null,
+    ...(e.description ? { description: e.description } : {}),
+    ...(e.instructions && e.instructions.length ? { instructions: e.instructions } : {})
+  }
+}
+files['api/catalogue.json'] = JSON.stringify(apiCatalogue, null, 1) + '\n'
+
 const pack = (obj) => header + 'export default ' + JSON.stringify(obj) + '\n'
 const byId = (pick) => Object.fromEntries(exercises.filter(e => !e.variantOf).map(e => [e.id, pick(e)]).filter(([, v]) => v && (!Array.isArray(v) || v.length)))
 files['frontend/src/instr/en.js'] = pack(byId(e => e.instructions))
