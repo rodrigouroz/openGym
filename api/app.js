@@ -385,6 +385,9 @@ function resolveRoutines(S, ALIASES) {
         ...(s.reps != null ? { reps: s.reps } : {}),
         ...(s.prog ? { prog: s.prog } : {}),
         ...(s.lastToFailure != null ? { lastToFailure: s.lastToFailure } : {}),
+        ...(s.restSec != null ? { restSec: s.restSec } : {}),
+        ...(s.sec != null ? { sec: s.sec } : {}),
+        ...(s.side ? { side: s.side } : {}),
         ...(s.note ? { note: s.note } : {})
       };
     });

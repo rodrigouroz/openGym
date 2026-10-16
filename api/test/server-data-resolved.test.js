@@ -148,6 +148,9 @@ test('routines use ex field and include all slot fields', async (t) => {
           mode: 'reps',
           prog: 'linear', 
           lastToFailure: true,
+          restSec: 180,
+          sec: 0,
+          side: 'R',
           note: 'Main compound' 
         }
       ]
@@ -174,6 +177,9 @@ test('routines use ex field and include all slot fields', async (t) => {
   assert.equal(slot.mode, 'reps');
   assert.equal(slot.prog, 'linear');
   assert.equal(slot.lastToFailure, true);
+  assert.equal(slot.restSec, 180, 'should include restSec');
+  assert.equal(slot.sec, 0, 'should include sec');
+  assert.equal(slot.side, 'R', 'should include side');
   assert.equal(slot.note, 'Main compound');
 });
 
