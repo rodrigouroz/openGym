@@ -1559,7 +1559,32 @@ paths:
         wrote and sends it back as `baseRev` on the next push, which lets the server
         refuse a write over a document the client never saw (see the 409 on PUT).
         Also accepts a read-only token.
+        
+        
+        With `?resolve=1` or `?include=catalogue`, the response includes an additional
+        `resolved` object containing fully resolved exercise data: exercise names,
+        muscles, equipment, and detailed workout/routine information without requiring
+        separate ID lookups. Custom exercises are merged and marked with `custom: true`;
+        unknown IDs are marked with `missing: true`. The `state` field remains unchanged
+        for backward compatibility. For read-only tokens, `gymCards` is filtered from
+        the state in the resolved view.
       security: [{ cookieAuth: [] }, { bearerAuth: [] }, { readTokenAuth: [] }]
+      parameters:
+        - name: resolve
+          in: query
+          schema:
+            type: string
+            enum: ['1']
+          description: >-
+            When set to "1", includes a `resolved` object with fully resolved exercise
+            data (names, muscles, equipment) and detailed workout/routine information.
+        - name: include
+          in: query
+          schema:
+            type: string
+            enum: ['catalogue']
+          description: >-
+            When set to "catalogue", includes a `resolved` object (same as `resolve=1`).
       responses:
         '200':
           description: The stored state, or null, and its revision.
@@ -1575,6 +1600,114 @@ paths:
                   rev:
                     type: integer
                     description: Server revision of the stored document; 0 when there is none.
+                  resolved:
+                    type: object
+                    description: >-
+                      Present only when `resolve=1` or `include=catalogue` is specified.
+                      Contains fully resolved exercise and workout data.
+                    properties:
+                      exercises:
+                        type: object
+                        description: >-
+                          Exercise metadata indexed by ID. Includes all exercises used in
+                          workouts, routines, and custom exercises. Built-in exercises have
+                          catalogue data; customs are marked `custom: true`; unknown IDs are
+                          marked `missing: true`.
+                        additionalProperties:
+                          type: object
+                          properties:
+                            id: { type: string }
+                            name: { type: string }
+                            bodyPart: { type: string }
+                            equipment: { type: string }
+                            primaryMuscles: { type: array, items: { type: string } }
+                            secondaryMuscles: { type: array, items: { type: string } }
+                            category: { type: string, nullable: true }
+                            custom: { type: boolean, description: "Present and true for custom exercises" }
+                            missing: { type: boolean, description: "Present and true for unknown exercise IDs" }
+                      workouts:
+                        type: array
+                        description: Workouts with resolved exercise details and full set data.
+                        items:
+                          type: object
+                          properties:
+                            date: { type: string, format: date }
+                            entries:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  exercise:
+                                    type: object
+                                    properties:
+                                      id: { type: string }
+                                      name: { type: string }
+                                      bodyPart: { type: string, nullable: true }
+                                      equipment: { type: string, nullable: true }
+                                      primaryMuscles: { type: array, items: { type: string } }
+                                      secondaryMuscles: { type: array, items: { type: string } }
+                                  sets:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        w: { type: number, description: "Weight" }
+                                        r: { type: number, description: "Reps" }
+                                        sec: { type: number, description: "Seconds (cardio)" }
+                                        min: { type: number, description: "Minutes (cardio)" }
+                                        speed: { type: number }
+                                        dist: { type: number, description: "Distance" }
+                                        done: { type: boolean }
+                                        warmup: { type: boolean }
+                                        failure: { type: boolean }
+                                        rpe: { type: number, description: "Present when effort scale is RPE" }
+                                        rir: { type: number, description: "Present when effort scale is RIR" }
+                                        note: { type: string }
+                                  note: { type: string }
+                            unit: { type: string }
+                            note: { type: string }
+                            label: { type: string }
+                            routineId: { type: string }
+                      routines:
+                        type: array
+                        description: Routines with resolved exercise details.
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string }
+                            name: { type: string }
+                            slots:
+                              type: array
+                              items:
+                                type: object
+                                properties:
+                                  exercise:
+                                    type: object
+                                    properties:
+                                      id: { type: string }
+                                      name: { type: string }
+                                      bodyPart: { type: string, nullable: true }
+                                      equipment: { type: string, nullable: true }
+                                      primaryMuscles: { type: array, items: { type: string } }
+                                      secondaryMuscles: { type: array, items: { type: string } }
+                                  note: { type: string }
+                            note: { type: string }
+                      exNotes:
+                        type: object
+                        description: Exercise notes with resolved exercise names.
+                        additionalProperties:
+                          type: object
+                          properties:
+                            name: { type: string }
+                            note: { type: string }
+                      meta:
+                        type: object
+                        description: Metadata about the resolved response.
+                        properties:
+                          catalogueVersion: { type: integer, description: "Number of exercises in catalogue" }
+                          unit: { type: string, description: "User's weight unit preference" }
+                          effortScale: { type: string, description: "User's effort scale (rpe or rir)" }
+                          generatedAt: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Unauthorized' }
     put:
       tags: [data]
