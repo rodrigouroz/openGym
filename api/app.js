@@ -154,7 +154,7 @@ db.readTokens = db.readTokens || [];     // read-only integration tokens, hashed
 const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
 
 // Load the exercise catalogue for resolved data views
-let CATALOGUE = {};
+let CATALOGUE = { exercises: {}, aliases: {} };
 try {
   const catalogueRaw = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'catalogue.json'), 'utf8');
   CATALOGUE = JSON.parse(catalogueRaw);
@@ -228,12 +228,15 @@ function isFailureSet(set) {
   return source.failure === true && !isWarmupRow(source);
 }
 
-function resolveExercise(id, S) {
-  const custom = (S.customEx || []).find(ex => ex.id === id);
+function resolveExercise(id, S, ALIASES) {
+  // Resolve alias first
+  const resolvedId = ALIASES[id] || id;
+  
+  const custom = (S.customEx || []).find(ex => ex.id === resolvedId);
   if (custom) {
     return {
-      id,
-      name: custom.n || custom.name || id,
+      id: resolvedId,
+      name: custom.n || custom.name || resolvedId,
       bodyPart: custom.bp || null,
       equipment: custom.eq || null,
       primaryMuscles: custom.primaries || [],
@@ -242,10 +245,10 @@ function resolveExercise(id, S) {
       custom: true
     };
   }
-  const catalogueEx = CATALOGUE[id];
+  const catalogueEx = CATALOGUE.exercises?.[resolvedId];
   if (catalogueEx) {
     return {
-      id,
+      id: resolvedId,
       name: catalogueEx.name,
       bodyPart: catalogueEx.bodyPart,
       equipment: catalogueEx.equipment,
@@ -254,42 +257,76 @@ function resolveExercise(id, S) {
       category: catalogueEx.category
     };
   }
-  return { id, missing: true };
+  return { id: resolvedId, missing: true };
 }
 
 function collectExerciseIds(S) {
   const ids = new Set();
   (S.workouts || []).forEach(w => {
-    (w.entries || []).forEach(e => { if (e.id) ids.add(e.id); });
+    if (!w || typeof w !== 'object') return;
+    (w.entries || []).forEach(e => { if (e && e.id) ids.add(e.id); });
   });
   (S.routines || []).forEach(r => {
-    (r.slots || []).forEach(s => { if (s.id) ids.add(s.id); });
+    if (!r || typeof r !== 'object') return;
+    (r.ex || []).forEach(s => { if (s && s.id) ids.add(s.id); });
   });
-  (S.dayPlan || []).forEach(d => { if (d.id) ids.add(d.id); });
-  (S.queue || []).forEach(q => { if (q.id) ids.add(q.id); });
+  // dayPlan is an object {date: routineId}, week is {day: [routineIds]}
+  if (S.dayPlan && typeof S.dayPlan === 'object') {
+    Object.values(S.dayPlan).forEach(rid => {
+      if (rid) {
+        const routine = (S.routines || []).find(r => r && r.id === rid);
+        if (routine && routine.ex) {
+          routine.ex.forEach(s => { if (s && s.id) ids.add(s.id); });
+        }
+      }
+    });
+  }
+  if (S.week && typeof S.week === 'object') {
+    Object.values(S.week).forEach(rids => {
+      if (Array.isArray(rids)) {
+        rids.forEach(rid => {
+          if (!rid) return;
+          const routine = (S.routines || []).find(r => r && r.id === rid);
+          if (routine && routine.ex) {
+            routine.ex.forEach(s => { if (s && s.id) ids.add(s.id); });
+          }
+        });
+      }
+    });
+  }
+  if (S.queue && typeof S.queue === 'object') {
+    Object.values(S.queue).forEach(item => {
+      if (item && item.id) ids.add(item.id);
+    });
+  }
   Object.keys(S.exNotes || {}).forEach(id => ids.add(id));
+  Object.keys(S.exWeights || {}).forEach(id => ids.add(id));
   (S.favEx || []).forEach(id => ids.add(id));
   return ids;
 }
 
-function resolveWorkouts(S, unit, effortScale) {
-  return (S.workouts || []).map(w => {
-    const entries = (w.entries || []).map(e => {
-      const ex = resolveExercise(e.id, S);
-      const sets = (e.sets || []).map(s => {
+function resolveWorkouts(S, unit, ALIASES) {
+  return (S.workouts || []).filter(w => w && typeof w === 'object').map(w => {
+    const entries = (w.entries || []).filter(e => e && typeof e === 'object').map(e => {
+      const ex = resolveExercise(e.id, S, ALIASES);
+      const sets = (e.sets || []).filter(s => s && typeof s === 'object').map(s => {
         const out = {
           w: Number(s.w) || 0,
           r: Number(s.r) || 0,
-          sec: Number(s.sec) || 0,
-          min: Number(s.min) || 0,
-          speed: Number(s.speed) || 0,
-          dist: Number(s.dist) || 0,
           done: !!s.done
         };
+        // Conserve all set fields
+        if (s.sec != null) out.sec = Number(s.sec);
+        if (s.min != null) out.min = Number(s.min);
+        if (s.speed != null) out.speed = Number(s.speed);
+        if (s.dist != null) out.dist = Number(s.dist);
+        if (s.sides) out.sides = s.sides;
+        if (s.at != null) out.at = s.at;
         if (isWarmupRow(s)) out.warmup = true;
         if (isFailureSet(s)) out.failure = true;
-        if (effortScale === 'rpe' && s.rpe != null) out.rpe = Number(s.rpe);
-        if (effortScale === 'rir' && s.rir != null) out.rir = Number(s.rir);
+        // Include both rpe and rir if they exist, regardless of effort scale
+        if (s.rpe != null) out.rpe = Number(s.rpe);
+        if (s.rir != null) out.rir = Number(s.rir);
         if (s.note) out.note = s.note;
         return out;
       });
@@ -303,24 +340,36 @@ function resolveWorkouts(S, unit, effortScale) {
           secondaryMuscles: ex.secondaryMuscles || []
         },
         sets,
+        ...(e.topW != null ? { topW: e.topW } : {}),
+        ...(e.target ? { target: e.target } : {}),
+        ...(e.planned != null ? { planned: e.planned } : {}),
+        ...(e.rid ? { rid: e.rid } : {}),
         ...(e.note ? { note: e.note } : {})
       };
     });
     return {
+      ...(w.id ? { id: w.id } : {}),
       date: w.d,
-      entries,
-      unit,
-      ...(w.note ? { note: w.note } : {}),
+      ...(w.start ? { start: w.start } : {}),
+      ...(w.end ? { end: w.end } : {}),
+      ...(w.name ? { name: w.name } : {}),
+      ...(w.bw != null ? { bw: w.bw } : {}),
+      ...(w.prs ? { prs: w.prs } : {}),
+      ...(w.vol != null ? { vol: w.vol } : {}),
+      ...(w.routineIds ? { routineIds: w.routineIds } : {}),
       ...(w.routineId ? { routineId: w.routineId } : {}),
-      ...(w.label ? { label: w.label } : {})
+      ...(w.note ? { note: w.note } : {}),
+      ...(w.label ? { label: w.label } : {}),
+      entries,
+      unit
     };
   });
 }
 
-function resolveRoutines(S) {
-  return (S.routines || []).map(r => {
-    const slots = (r.slots || []).map(s => {
-      const ex = resolveExercise(s.id, S);
+function resolveRoutines(S, ALIASES) {
+  return (S.routines || []).filter(r => r && typeof r === 'object' && r.id).map(r => {
+    const slots = (r.ex || []).filter(s => s && typeof s === 'object').map(s => {
+      const ex = resolveExercise(s.id, S, ALIASES);
       return {
         exercise: {
           id: s.id,
@@ -330,22 +379,29 @@ function resolveRoutines(S) {
           primaryMuscles: ex.primaryMuscles || [],
           secondaryMuscles: ex.secondaryMuscles || []
         },
+        ...(s.sets != null ? { sets: s.sets } : {}),
+        ...(s.mode ? { mode: s.mode } : {}),
+        ...(s.repsMin != null ? { repsMin: s.repsMin } : {}),
+        ...(s.reps != null ? { reps: s.reps } : {}),
+        ...(s.prog ? { prog: s.prog } : {}),
+        ...(s.lastToFailure != null ? { lastToFailure: s.lastToFailure } : {}),
         ...(s.note ? { note: s.note } : {})
       };
     });
     return {
       id: r.id,
       name: r.name,
-      slots,
+      ex: slots,
       ...(r.note ? { note: r.note } : {})
     };
   });
 }
 
-function resolveExNotes(S) {
+function resolveExNotes(S, ALIASES) {
   const notes = {};
   for (const [id, note] of Object.entries(S.exNotes || {})) {
-    const ex = resolveExercise(id, S);
+    if (!note) continue;
+    const ex = resolveExercise(id, S, ALIASES);
     notes[id] = {
       name: ex.name || ex.id,
       note
@@ -354,25 +410,48 @@ function resolveExNotes(S) {
   return notes;
 }
 
+function resolveExWeights(S, ALIASES) {
+  const weights = {};
+  for (const [id, data] of Object.entries(S.exWeights || {})) {
+    if (!data || typeof data !== 'object') continue;
+    const ex = resolveExercise(id, S, ALIASES);
+    weights[id] = {
+      name: ex.name || ex.id,
+      w: data.w,
+      d: data.d
+    };
+  }
+  return weights;
+}
+
 function buildResolvedData(S, isReadToken) {
-  const unit = S.settings?.unit || 'kg';
-  const effortScale = S.settings?.effort || 'rpe';
+  const unit = S.unit || 'kg';
+  const effortScale = S.effort || 'rir';
+  const ALIASES = CATALOGUE.aliases || {};
   
   const ids = collectExerciseIds(S);
   (S.customEx || []).forEach(ex => ids.add(ex.id));
   
   const exercises = {};
   for (const id of ids) {
-    exercises[id] = resolveExercise(id, S);
+    exercises[id] = resolveExercise(id, S, ALIASES);
   }
   
   const resolved = {
     exercises,
-    workouts: resolveWorkouts(S, unit, effortScale),
-    routines: resolveRoutines(S),
-    exNotes: resolveExNotes(S),
+    workouts: resolveWorkouts(S, unit, ALIASES),
+    routines: resolveRoutines(S, ALIASES),
+    exNotes: resolveExNotes(S, ALIASES),
+    exWeights: resolveExWeights(S, ALIASES),
+    dayPlan: S.dayPlan || {},
+    week: S.week || {},
+    bodyweight: S.bodyweight || [],
+    targetW: S.targetW,
+    dayNotes: S.dayNotes || {},
+    measurements: S.measurements || {},
+    customMeasurements: S.customMeasurements || {},
     meta: {
-      catalogueVersion: Object.keys(CATALOGUE).length,
+      catalogueVersion: Object.keys(CATALOGUE.exercises || {}).length,
       unit,
       effortScale,
       generatedAt: new Date().toISOString()

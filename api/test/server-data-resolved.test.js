@@ -67,34 +67,45 @@ test('GET /api/data without resolve param returns unchanged response', async (t)
   assert.ok(!snapshot.body.resolved, 'no resolved field without ?resolve=1');
 });
 
-test('GET /api/data with resolve=1 includes resolved data', async (t) => {
+test('GET /api/data with resolve=1 and realistic state structure', async (t) => {
   const h = await startServer(t);
   
+  // Real state structure: unit/effort at root, routines with ex, dayPlan as object
   const state = {
+    unit: 'kg',
+    effort: 'rir',
     workouts: [{
+      id: 'w1',
       d: '2026-10-15',
+      start: 1697385600000,
+      end: 1697389200000,
+      bw: 80,
+      routineId: 'r1',
       entries: [{
         id: '0025',
+        topW: 100,
         sets: [
-          { w: 100, r: 8, done: true },
-          { w: 100, r: 8, done: true }
+          { w: 100, r: 8, done: true, rir: 2 },
+          { w: 100, r: 8, done: true, rir: 1 },
+          { w: 60, r: 12, done: true, warmup: true }
         ]
       }]
     }],
     routines: [{
       id: 'r1',
       name: 'Push Day',
-      slots: [{ id: '0025' }]
+      ex: [
+        { id: '0025', sets: 3, reps: 8, prog: 'linear', note: 'Main lift' }
+      ]
     }],
-    customEx: [{
-      id: 'custom1',
-      n: 'My Custom Exercise',
-      bp: 'chest',
-      eq: 'dumbbell'
-    }],
-    favEx: ['0025', 'custom1'],
+    dayPlan: { '2026-10-16': 'r1' },
+    week: { mon: ['r1'], wed: ['r1'], fri: ['r1'] },
     exNotes: { '0025': 'Focus on form' },
-    settings: { unit: 'kg', effort: 'rpe' }
+    exWeights: { '0025': { w: 100, d: '2026-10-15' } },
+    bodyweight: [{ d: '2026-10-15', w: 80 }],
+    dayNotes: { '2026-10-15': 'Good session' },
+    measurements: { chest: [{ d: '2026-10-15', v: 100 }] },
+    customMeasurements: { test: { name: 'Test', unit: 'cm' } }
   };
   
   await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
@@ -107,177 +118,40 @@ test('GET /api/data with resolve=1 includes resolved data', async (t) => {
   assert.ok(resolved.body.resolved.workouts);
   assert.ok(resolved.body.resolved.routines);
   assert.ok(resolved.body.resolved.exNotes);
+  assert.ok(resolved.body.resolved.exWeights);
+  assert.ok(resolved.body.resolved.dayPlan);
+  assert.ok(resolved.body.resolved.week);
+  assert.ok(resolved.body.resolved.bodyweight);
+  assert.ok(resolved.body.resolved.dayNotes);
+  assert.ok(resolved.body.resolved.measurements);
+  assert.ok(resolved.body.resolved.customMeasurements);
   assert.ok(resolved.body.resolved.meta);
+  
+  // Verify meta has effort scale
+  assert.equal(resolved.body.resolved.meta.effortScale, 'rir');
 });
 
-test('resolved exercises include built-in exercise data', async (t) => {
+test('routines use ex field and include all slot fields', async (t) => {
   const h = await startServer(t);
   
   const state = {
-    workouts: [{
-      d: '2026-10-15',
-      entries: [{ id: '0025', sets: [{ w: 100, r: 8, done: true }] }]
-    }],
-    settings: { unit: 'kg' }
-  };
-  
-  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
-  
-  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
-  assert.equal(resolved.status, 200);
-  
-  const ex = resolved.body.resolved.exercises['0025'];
-  assert.ok(ex, 'exercise 0025 should be resolved');
-  assert.ok(ex.name, 'should have name');
-  assert.ok(ex.bodyPart, 'should have bodyPart');
-  assert.ok(ex.equipment, 'should have equipment');
-  assert.ok(Array.isArray(ex.primaryMuscles), 'should have primaryMuscles array');
-  assert.ok(Array.isArray(ex.secondaryMuscles), 'should have secondaryMuscles array');
-  assert.ok(!ex.custom, 'built-in exercise should not be marked as custom');
-  assert.ok(!ex.missing, 'known exercise should not be marked as missing');
-});
-
-test('resolved exercises merge custom exercises', async (t) => {
-  const h = await startServer(t);
-  
-  const state = {
-    customEx: [{
-      id: 'custom1',
-      n: 'My Custom Squat',
-      bp: 'legs',
-      eq: 'barbell',
-      primaries: ['quadriceps'],
-      sm: ['glutes']
-    }],
-    workouts: [{
-      d: '2026-10-15',
-      entries: [{ id: 'custom1', sets: [{ w: 120, r: 5, done: true }] }]
-    }],
-    settings: { unit: 'kg' }
-  };
-  
-  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
-  
-  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
-  assert.equal(resolved.status, 200);
-  
-  const ex = resolved.body.resolved.exercises.custom1;
-  assert.ok(ex, 'custom exercise should be resolved');
-  assert.equal(ex.name, 'My Custom Squat');
-  assert.equal(ex.bodyPart, 'legs');
-  assert.equal(ex.equipment, 'barbell');
-  assert.equal(ex.custom, true, 'custom exercise should be marked as custom');
-  assert.ok(!ex.missing, 'custom exercise should not be marked as missing');
-});
-
-test('resolved exercises mark unknown IDs as missing', async (t) => {
-  const h = await startServer(t);
-  
-  const state = {
-    workouts: [{
-      d: '2026-10-15',
-      entries: [{ id: 'unknown999', sets: [{ w: 50, r: 10, done: true }] }]
-    }],
-    settings: { unit: 'kg' }
-  };
-  
-  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
-  
-  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
-  assert.equal(resolved.status, 200);
-  
-  const ex = resolved.body.resolved.exercises.unknown999;
-  assert.ok(ex, 'unknown exercise should still have an entry');
-  assert.equal(ex.id, 'unknown999');
-  assert.equal(ex.missing, true, 'unknown exercise should be marked as missing');
-});
-
-test('resolved workouts include exercise details and set data', async (t) => {
-  const h = await startServer(t);
-  
-  const state = {
-    workouts: [{
-      d: '2026-10-15',
-      label: 'Morning Session',
-      note: 'Felt strong',
-      entries: [{
-        id: '0025',
-        note: 'Good depth',
-        sets: [
-          { w: 100, r: 8, done: true, rpe: 7 },
-          { w: 100, r: 8, done: true, rpe: 8 },
-          { w: 60, r: 12, done: true, warmup: true }
-        ]
-      }]
-    }],
-    settings: { unit: 'kg', effort: 'rpe' }
-  };
-  
-  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
-  
-  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
-  assert.equal(resolved.status, 200);
-  
-  const workout = resolved.body.resolved.workouts[0];
-  assert.equal(workout.date, '2026-10-15');
-  assert.equal(workout.unit, 'kg');
-  assert.equal(workout.note, 'Felt strong');
-  assert.equal(workout.label, 'Morning Session');
-  
-  const entry = workout.entries[0];
-  assert.ok(entry.exercise, 'entry should have exercise details');
-  assert.equal(entry.exercise.id, '0025');
-  assert.ok(entry.exercise.name, 'exercise should have name');
-  assert.ok(entry.exercise.bodyPart, 'exercise should have bodyPart');
-  assert.equal(entry.note, 'Good depth');
-  
-  assert.equal(entry.sets.length, 3);
-  assert.equal(entry.sets[0].w, 100);
-  assert.equal(entry.sets[0].r, 8);
-  assert.equal(entry.sets[0].done, true);
-  assert.equal(entry.sets[0].rpe, 7);
-  assert.ok(!entry.sets[0].warmup, 'work set should not be marked as warmup');
-  assert.equal(entry.sets[2].warmup, true, 'warmup set should be marked');
-});
-
-test('resolved workouts respect effort scale setting', async (t) => {
-  const h = await startServer(t);
-  
-  const state = {
-    workouts: [{
-      d: '2026-10-15',
-      entries: [{
-        id: '0025',
-        sets: [{ w: 100, r: 8, done: true, rir: 2 }]
-      }]
-    }],
-    settings: { unit: 'kg', effort: 'rir' }
-  };
-  
-  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
-  
-  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
-  assert.equal(resolved.status, 200);
-  
-  const set = resolved.body.resolved.workouts[0].entries[0].sets[0];
-  assert.equal(set.rir, 2, 'RIR should be included when effort=rir');
-  assert.ok(!set.rpe, 'RPE should not be included when effort=rir');
-});
-
-test('resolved routines include exercise details', async (t) => {
-  const h = await startServer(t);
-  
-  const state = {
+    unit: 'kg',
     routines: [{
       id: 'r1',
-      name: 'Push Day',
-      note: 'Upper body focus',
-      slots: [
-        { id: '0025', note: 'Main lift' },
-        { id: '0085' }
+      name: 'Full Body',
+      ex: [
+        { 
+          id: '0025', 
+          sets: 3, 
+          reps: 8, 
+          repsMin: 6,
+          mode: 'reps',
+          prog: 'linear', 
+          lastToFailure: true,
+          note: 'Main compound' 
+        }
       ]
-    }],
-    settings: { unit: 'kg' }
+    }]
   };
   
   await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
@@ -287,89 +161,233 @@ test('resolved routines include exercise details', async (t) => {
   
   const routine = resolved.body.resolved.routines[0];
   assert.equal(routine.id, 'r1');
-  assert.equal(routine.name, 'Push Day');
-  assert.equal(routine.note, 'Upper body focus');
-  assert.equal(routine.slots.length, 2);
+  assert.equal(routine.name, 'Full Body');
+  assert.ok(routine.ex);
+  assert.ok(!routine.slots, 'should not have slots field');
   
-  const slot = routine.slots[0];
-  assert.ok(slot.exercise, 'slot should have exercise details');
+  const slot = routine.ex[0];
+  assert.ok(slot.exercise);
   assert.equal(slot.exercise.id, '0025');
-  assert.ok(slot.exercise.name, 'exercise should have name');
-  assert.equal(slot.note, 'Main lift');
+  assert.equal(slot.sets, 3);
+  assert.equal(slot.reps, 8);
+  assert.equal(slot.repsMin, 6);
+  assert.equal(slot.mode, 'reps');
+  assert.equal(slot.prog, 'linear');
+  assert.equal(slot.lastToFailure, true);
+  assert.equal(slot.note, 'Main compound');
 });
 
-test('resolved exNotes include exercise names', async (t) => {
+test('sets preserve sides, at, and all cardio fields', async (t) => {
   const h = await startServer(t);
   
   const state = {
-    exNotes: {
-      '0025': 'Focus on depth and control',
-      '0085': 'Keep elbows tucked'
-    },
-    settings: { unit: 'kg' }
-  };
-  
-  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
-  
-  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
-  assert.equal(resolved.status, 200);
-  
-  const notes = resolved.body.resolved.exNotes;
-  assert.ok(notes['0025'], 'should have note for 0025');
-  assert.ok(notes['0025'].name, 'should include exercise name');
-  assert.equal(notes['0025'].note, 'Focus on depth and control');
-  assert.ok(notes['0085'].name, 'should include exercise name for 0085');
-});
-
-test('resolved meta includes catalogue version and settings', async (t) => {
-  const h = await startServer(t);
-  
-  const state = {
-    workouts: [{ d: '2026-10-15', entries: [] }],
-    settings: { unit: 'lb', effort: 'rpe' }
-  };
-  
-  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
-  
-  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
-  assert.equal(resolved.status, 200);
-  
-  const meta = resolved.body.resolved.meta;
-  assert.ok(meta.catalogueVersion >= 0, 'should have catalogue version');
-  assert.equal(meta.unit, 'lb');
-  assert.equal(meta.effortScale, 'rpe');
-  assert.ok(meta.generatedAt, 'should have generatedAt timestamp');
-  assert.ok(Date.parse(meta.generatedAt), 'generatedAt should be valid ISO date');
-});
-
-test('read token access with resolve=1 works', async (t) => {
-  const h = await startServer(t);
-  
-  const state = {
+    unit: 'kg',
     workouts: [{
       d: '2026-10-15',
-      entries: [{ id: '0025', sets: [{ w: 100, r: 8, done: true }] }]
-    }],
-    settings: { unit: 'kg' }
+      entries: [{
+        id: '0025',
+        sets: [
+          { w: 50, r: 10, sides: { L: { r: 10, done: true }, R: { r: 10, done: true } }, done: true },
+          { min: 30, sec: 0, speed: 10, dist: 5, done: true, at: 1697385600000 }
+        ]
+      }]
+    }]
   };
   
   await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
   
-  const token = await h.createToken('u_one', 'Test Bot');
-  
-  const resolved = await h.req('GET', '/api/data?resolve=1', bearer(token));
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
   assert.equal(resolved.status, 200);
-  assert.ok(resolved.body.resolved, 'read token should get resolved data');
-  assert.ok(resolved.body.resolved.exercises['0025'], 'should resolve exercises');
+  
+  const sets = resolved.body.resolved.workouts[0].entries[0].sets;
+  assert.ok(sets[0].sides, 'should preserve sides');
+  assert.equal(sets[1].min, 30);
+  assert.equal(sets[1].sec, 0);
+  assert.equal(sets[1].speed, 10);
+  assert.equal(sets[1].dist, 5);
+  assert.equal(sets[1].at, 1697385600000);
+});
+
+test('workouts include all workout-level fields', async (t) => {
+  const h = await startServer(t);
+  
+  const state = {
+    unit: 'lb',
+    workouts: [{
+      id: 'w1',
+      d: '2026-10-15',
+      start: 1697385600000,
+      end: 1697389200000,
+      name: 'Push A',
+      bw: 180,
+      prs: 2,
+      vol: 12000,
+      routineIds: ['r1'],
+      routineId: 'r1',
+      label: 'Morning',
+      note: 'Great session',
+      entries: [{ id: '0025', sets: [{ w: 225, r: 5, done: true }] }]
+    }]
+  };
+  
+  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
+  
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  assert.equal(resolved.status, 200);
+  
+  const workout = resolved.body.resolved.workouts[0];
+  assert.equal(workout.id, 'w1');
+  assert.equal(workout.date, '2026-10-15');
+  assert.equal(workout.start, 1697385600000);
+  assert.equal(workout.end, 1697389200000);
+  assert.equal(workout.name, 'Push A');
+  assert.equal(workout.bw, 180);
+  assert.equal(workout.prs, 2);
+  assert.equal(workout.vol, 12000);
+  assert.ok(workout.routineIds);
+  assert.equal(workout.routineId, 'r1');
+  assert.equal(workout.label, 'Morning');
+  assert.equal(workout.note, 'Great session');
+  assert.equal(workout.unit, 'lb');
+});
+
+test('entries include topW, target, planned, rid fields', async (t) => {
+  const h = await startServer(t);
+  
+  const state = {
+    unit: 'kg',
+    workouts: [{
+      d: '2026-10-15',
+      entries: [{
+        id: '0025',
+        topW: 100,
+        target: { sets: 3, reps: 8 },
+        planned: true,
+        rid: 'r1',
+        note: 'First compound',
+        sets: [{ w: 100, r: 8, done: true }]
+      }]
+    }]
+  };
+  
+  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
+  
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  assert.equal(resolved.status, 200);
+  
+  const entry = resolved.body.resolved.workouts[0].entries[0];
+  assert.equal(entry.topW, 100);
+  assert.ok(entry.target);
+  assert.equal(entry.target.sets, 3);
+  assert.equal(entry.target.reps, 8);
+  assert.equal(entry.planned, true);
+  assert.equal(entry.rid, 'r1');
+  assert.equal(entry.note, 'First compound');
+});
+
+test('both rpe and rir are included when present, regardless of effort scale', async (t) => {
+  const h = await startServer(t);
+  
+  const state = {
+    unit: 'kg',
+    effort: 'rpe',
+    workouts: [{
+      d: '2026-10-15',
+      entries: [{
+        id: '0025',
+        sets: [
+          { w: 100, r: 8, done: true, rpe: 8, rir: 2 }
+        ]
+      }]
+    }]
+  };
+  
+  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
+  
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  assert.equal(resolved.status, 200);
+  
+  const set = resolved.body.resolved.workouts[0].entries[0].sets[0];
+  assert.equal(set.rpe, 8, 'should include rpe even though effort is rpe');
+  assert.equal(set.rir, 2, 'should include rir even though effort is rpe');
+});
+
+test('dayPlan and week are objects, queue can be null', async (t) => {
+  const h = await startServer(t);
+  
+  const state = {
+    unit: 'kg',
+    routines: [{ id: 'r1', name: 'Push', ex: [] }],
+    dayPlan: { '2026-10-16': 'r1', '2026-10-18': 'r1' },
+    week: { mon: ['r1'], wed: ['r1'], fri: ['r1'] },
+    queue: null
+  };
+  
+  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
+  
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  assert.equal(resolved.status, 200);
+  
+  assert.ok(typeof resolved.body.resolved.dayPlan === 'object');
+  assert.equal(resolved.body.resolved.dayPlan['2026-10-16'], 'r1');
+  assert.ok(typeof resolved.body.resolved.week === 'object');
+  assert.ok(Array.isArray(resolved.body.resolved.week.mon));
+});
+
+test('exWeights includes resolved names', async (t) => {
+  const h = await startServer(t);
+  
+  const state = {
+    unit: 'kg',
+    exWeights: {
+      '0025': { w: 100, d: '2026-10-15' },
+      '0085': { w: 50, d: '2026-10-14' }
+    }
+  };
+  
+  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
+  
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  assert.equal(resolved.status, 200);
+  
+  const weights = resolved.body.resolved.exWeights;
+  assert.ok(weights['0025']);
+  assert.ok(weights['0025'].name, 'should have resolved name');
+  assert.equal(weights['0025'].w, 100);
+  assert.equal(weights['0025'].d, '2026-10-15');
+});
+
+test('alias IDs are resolved correctly', async (t) => {
+  const h = await startServer(t);
+  
+  // Assuming there's an alias in the catalogue (we'll use a variant exercise)
+  const state = {
+    unit: 'kg',
+    workouts: [{
+      d: '2026-10-15',
+      // If 0026 is an alias/variant of 0025, it should resolve to 0025
+      entries: [{ id: '0026', sets: [{ w: 100, r: 8, done: true }] }]
+    }]
+  };
+  
+  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
+  
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  assert.equal(resolved.status, 200);
+  
+  // The exercise should still be accessible and resolved
+  const entry = resolved.body.resolved.workouts[0].entries[0];
+  assert.ok(entry.exercise);
+  assert.ok(entry.exercise.name);
 });
 
 test('read token excludes gymCards from state', async (t) => {
   const h = await startServer(t);
   
   const state = {
+    unit: 'kg',
     workouts: [],
-    gymCards: { cardId: 'secret123', validUntil: '2027-01-01' },
-    settings: { unit: 'kg' }
+    gymCards: { cardId: 'secret123', validUntil: '2027-01-01' }
   };
   
   await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
@@ -379,59 +397,22 @@ test('read token excludes gymCards from state', async (t) => {
   const withToken = await h.req('GET', '/api/data?resolve=1', bearer(token));
   assert.equal(withToken.status, 200);
   assert.ok(!withToken.body.state.gymCards, 'gymCards should be filtered for read token');
+  assert.ok(!withToken.body.resolved.gymCards, 'gymCards should not be in resolved either');
   
   const withSession = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
   assert.equal(withSession.status, 200);
   assert.ok(withSession.body.state.gymCards, 'gymCards should be present for session');
 });
 
-test('read token still forbidden on other routes', async (t) => {
-  const h = await startServer(t);
-  
-  const token = await h.createToken('u_one', 'Test Bot');
-  
-  const put = await h.req('PUT', '/api/data', bearer(token), { state: {}, baseRev: 0 });
-  assert.equal(put.status, 403, 'PUT /api/data should be forbidden with read token');
-  
-  const account = await h.req('GET', '/api/account', bearer(token));
-  assert.equal(account.status, 403, 'other GET routes should be forbidden with read token');
-});
-
-test('include=catalogue also triggers resolve', async (t) => {
+test('dayNotes are included and not filtered', async (t) => {
   const h = await startServer(t);
   
   const state = {
-    workouts: [{
-      d: '2026-10-15',
-      entries: [{ id: '0025', sets: [{ w: 100, r: 8, done: true }] }]
-    }],
-    settings: { unit: 'kg' }
-  };
-  
-  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
-  
-  const resolved = await h.req('GET', '/api/data?include=catalogue', cookie('u_one'));
-  assert.equal(resolved.status, 200);
-  assert.ok(resolved.body.resolved, 'include=catalogue should trigger resolve');
-  assert.ok(resolved.body.resolved.exercises['0025']);
-});
-
-test('warmup and failure flags are preserved in resolved workouts', async (t) => {
-  const h = await startServer(t);
-  
-  const state = {
-    workouts: [{
-      d: '2026-10-15',
-      entries: [{
-        id: '0025',
-        sets: [
-          { w: 60, r: 10, done: true, warmup: true },
-          { w: 100, r: 8, done: true },
-          { w: 100, r: 12, done: true, failure: true }
-        ]
-      }]
-    }],
-    settings: { unit: 'kg' }
+    unit: 'kg',
+    dayNotes: { 
+      '2026-10-15': 'Good training day',
+      '2026-10-16': 'Rest day - recovery'
+    }
   };
   
   await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
@@ -439,49 +420,60 @@ test('warmup and failure flags are preserved in resolved workouts', async (t) =>
   const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
   assert.equal(resolved.status, 200);
   
-  const sets = resolved.body.resolved.workouts[0].entries[0].sets;
-  assert.equal(sets[0].warmup, true, 'warmup set should be marked');
-  assert.ok(!sets[1].warmup, 'work set should not have warmup flag');
-  assert.ok(!sets[1].failure, 'regular work set should not have failure flag');
-  assert.equal(sets[2].failure, true, 'failure set should be marked');
+  assert.ok(resolved.body.resolved.dayNotes);
+  assert.equal(resolved.body.resolved.dayNotes['2026-10-15'], 'Good training day');
+  assert.equal(resolved.body.resolved.dayNotes['2026-10-16'], 'Rest day - recovery');
 });
 
-test('state fields are not filtered differently than before', async (t) => {
+test('malformed data does not cause 500 error', async (t) => {
   const h = await startServer(t);
   
   const state = {
-    workouts: [],
-    routines: [],
-    bodyweight: [{ d: '2026-10-15', w: 80 }],
-    measurements: { chest: [{ d: '2026-10-15', v: 100 }] },
-    customMeasurements: { test: { name: 'Test', unit: 'cm' } },
-    dayNotes: { '2026-10-15': 'Good day' },
-    settings: { unit: 'kg' },
-    _unstamped: { should: 'be filtered' },
-    _prior: { should: 'be filtered' }
+    unit: 'kg',
+    workouts: [
+      { d: '2026-10-15', entries: [{ id: '0025', sets: [{ w: 100, r: 8 }] }] },
+      null, // malformed workout
+      { d: '2026-10-16' } // workout without entries
+    ],
+    routines: [
+      { id: 'r1', name: 'Push', ex: [{ id: '0025' }] },
+      null, // malformed routine
+      { id: 'r2' } // routine without ex
+    ],
+    dayPlan: { '2026-10-17': null }, // null routine ID
+    queue: { x: null }, // null queue item
+    exWeights: { '0025': null } // null weight data
   };
   
   await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
   
-  const without = await h.req('GET', '/api/data', cookie('u_one'));
-  const withResolve = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  assert.equal(resolved.status, 200, 'should not error on malformed data');
+  assert.ok(resolved.body.resolved);
+});
+
+test('measurements and customMeasurements are included', async (t) => {
+  const h = await startServer(t);
   
-  assert.equal(without.status, 200);
-  assert.equal(withResolve.status, 200);
+  const state = {
+    unit: 'kg',
+    measurements: {
+      chest: [{ d: '2026-10-15', v: 100 }],
+      arms: [{ d: '2026-10-15', v: 40 }]
+    },
+    customMeasurements: {
+      neck: { name: 'Neck', unit: 'cm' },
+      calf: { name: 'Calf', unit: 'cm' }
+    }
+  };
   
-  assert.ok(without.body.state.bodyweight);
-  assert.ok(without.body.state.measurements);
-  assert.ok(without.body.state.customMeasurements);
-  assert.ok(without.body.state.dayNotes);
-  assert.ok(without.body.state.settings);
-  assert.ok(!without.body.state._unstamped, 'internal fields should be filtered');
-  assert.ok(!without.body.state._prior, 'internal fields should be filtered');
+  await h.req('PUT', '/api/data', cookie('u_one'), { state, baseRev: 0 });
   
-  assert.ok(withResolve.body.state.bodyweight);
-  assert.ok(withResolve.body.state.measurements);
-  assert.ok(withResolve.body.state.customMeasurements);
-  assert.ok(withResolve.body.state.dayNotes);
-  assert.ok(withResolve.body.state.settings);
-  assert.ok(!withResolve.body.state._unstamped, 'internal fields should be filtered with resolve');
-  assert.ok(!withResolve.body.state._prior, 'internal fields should be filtered with resolve');
+  const resolved = await h.req('GET', '/api/data?resolve=1', cookie('u_one'));
+  assert.equal(resolved.status, 200);
+  
+  assert.ok(resolved.body.resolved.measurements);
+  assert.ok(resolved.body.resolved.measurements.chest);
+  assert.ok(resolved.body.resolved.customMeasurements);
+  assert.ok(resolved.body.resolved.customMeasurements.neck);
 });

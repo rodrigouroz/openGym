@@ -86,7 +86,7 @@ for (const e of exercises.filter(ex => !ex.variantOf)) {
     ...(e.instructions && e.instructions.length ? { instructions: e.instructions } : {})
   }
 }
-files['api/catalogue.json'] = JSON.stringify(apiCatalogue, null, 1) + '\n'
+files['api/catalogue.json'] = JSON.stringify({ exercises: apiCatalogue, aliases: alias }, null, 1) + '\n'
 
 const pack = (obj) => header + 'export default ' + JSON.stringify(obj) + '\n'
 const byId = (pick) => Object.fromEntries(exercises.filter(e => !e.variantOf).map(e => [e.id, pick(e)]).filter(([, v]) => v && (!Array.isArray(v) || v.length)))
