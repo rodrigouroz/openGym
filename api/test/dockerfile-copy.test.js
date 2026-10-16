@@ -12,23 +12,27 @@ import { fileURLToPath } from 'node:url';
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = f => fs.readFileSync(path.join(API, f), 'utf8');
 
-// Every `./name.js` a file imports, statically or dynamically — root-level only; coach/ is
-// copied as a whole directory.
-const rootImports = src => [...src.matchAll(/(?:from\s+|import\s*\(\s*)['"]\.\/([^'"/]+\.js)['"]/g)].map(m => m[1]);
+// Every `./name.js` / `./name.json` a file imports, statically or dynamically — root-level
+// only; coach/ is copied as a whole directory. JSON is never walked further.
+const rootImports = src => [...src.matchAll(/(?:from\s+|import\s*\(\s*)['"]\.\/([^'"/]+\.(?:js|json))['"]/g)].map(m => m[1]);
 
 test('every root-level module server.js needs is on the Dockerfile COPY line', () => {
   const line = read('Dockerfile').split('\n').find(l => /^COPY\s+server\.js\b/.test(l));
   assert.ok(line, 'the COPY line that carries server.js');
   const copied = new Set(line.trim().split(/\s+/).slice(1, -1));
 
-  const needed = new Set(['server.js', 'catalogue.json']);
+  const needed = new Set(['server.js']);
   const queue = ['server.js'];
   while (queue.length) {
     for (const dep of rootImports(read(queue.shift()))) {
-      if (!needed.has(dep)) { needed.add(dep); queue.push(dep); }
+      if (!needed.has(dep)) {
+        needed.add(dep);
+        if (dep.endsWith('.js')) queue.push(dep);
+      }
     }
   }
   assert.ok(needed.has('media.js'), 'the walk finds the media store');
+  assert.ok(needed.has('catalogue.json'), 'app.js imports catalogue.json for ?resolve=1');
   const missing = [...needed].filter(f => !copied.has(f));
   assert.deepEqual(missing, [], `add ${missing.join(', ')} to the COPY line in api/Dockerfile`);
   for (const f of copied) assert.ok(fs.existsSync(path.join(API, f)), `${f} is copied but does not exist`);

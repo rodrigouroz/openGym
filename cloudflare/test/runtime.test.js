@@ -50,10 +50,17 @@ test('real Workers runtime: passkeys, first admin, sessions, large state, confli
   const admin = users.find(x => x.body.user.admin);
   const ordinary = users.find(x => !x.body.user.admin);
   assert.equal((await req('GET', '/api/admin/users', undefined, ordinary.cookie)).status, 403);
-  const state = { workouts: [], routines: [], futureField: '🏋️'.repeat(650000), resetAt: 123, resetIds: {} };
+  const state = { workouts: [], routines: [], futureField: '🏋️'.repeat(650000), resetAt: 123, resetIds: {},
+    exWeights: { '0025': { w: 60, d: '2026-10-15' } } };
   const saved = await req('PUT', '/api/data', { state, baseRev: 0 }, admin.cookie);
   assert.equal(saved.status, 200);
   assert.equal(saved.body.rev, 1);
+  // Catalogue must come from the Worker bundle, not the DO filesystem (see catalogue-resolved.test.js).
+  const resolved = await req('GET', '/api/data?resolve=1', undefined, admin.cookie);
+  assert.equal(resolved.status, 200);
+  assert.ok(resolved.body.resolved?.meta?.catalogueVersion > 0,
+    `Worker catalogue must be non-empty (got catalogueVersion=${resolved.body.resolved?.meta?.catalogueVersion})`);
+  assert.equal(resolved.body.resolved.exWeights['0025'].name, 'barbell bench press');
   assert.equal((await req('GET', '/api/data', undefined, ordinary.cookie)).body.state, null);
   const oversized = await req('PUT', '/api/data', { state: { futureField: 'x'.repeat(5 * 1024 * 1024) } }, admin.cookie);
   assert.equal(oversized.status, 413);
