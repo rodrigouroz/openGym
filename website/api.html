@@ -245,7 +245,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.4.1</span>
-    <span>72 endpoints</span>
+    <span>76 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -632,10 +632,10 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="m post">POST</span>
     <span class="ep-path"><code>/api/account/read-tokens</code></span>
     <span class="ep-chev" aria-hidden="true"></span>
-    <span class="ep-sum">Make a read-only token</span>
+    <span class="ep-sum">Make a scoped token</span>
   </summary>
   <div class="ep-body">
-<p>Returns the token <b>once</b>, in <code>token</code>; only its SHA-256 is stored, so it cannot be shown again. Without <code>expiresAt</code> it is good until revoked, or until the profile signs out everywhere. At most 20 live tokens per profile. Audited as <code>auth.readtoken.create</code> with the token's name.</p>
+<p>Returns the token <b>once</b>, in <code>token</code>; only its SHA-256 is stored, so it cannot be shown again. Without <code>expiresAt</code> it is good until revoked, or until the profile signs out everywhere. At most 20 live tokens per profile. Audited as <code>auth.readtoken.create</code> with the token's name. The <code>scope</code> determines what the token can do: <code>read</code> (default) for read-only access, <code>routines</code> for reading and writing routines.</p>
     <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
 
 <p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
@@ -645,13 +645,19 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-desc">What the token is for, as the list shows it (trimmed).</span>
   </div>
   <div class="prow">
+    <span class="p-name">scope</span>
+    <span class="p-type">&quot;read&quot; | &quot;routines&quot;</span>
+    <span class="p-desc">Token scope: <code>read</code> for read-only access (default), <code>routines</code> for reading and writing routines.</span>
+  </div>
+  <div class="prow">
     <span class="p-name">expiresAt</span>
     <span class="p-type">string <span class="p-hint">(date-time)</span> | null</span>
     <span class="p-desc">When the token stops working. In the future and at most ten years away; absent or null for no expiry.</span>
   </div>
 </div>
 <pre><code>{
-  &quot;name&quot;: &quot;My assistant&quot;,
+  &quot;name&quot;: &quot;Pulso&quot;,
+  &quot;scope&quot;: &quot;routines&quot;,
   &quot;expiresAt&quot;: &quot;2027-01-01T00:00:00.000Z&quot;
 }</code></pre>
     <p class="ep-h">Responses</p>
@@ -1703,6 +1709,184 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow rrow">
     <span class="r-code s4">401</span>
     <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-getRoutines">
+  <summary>
+    <span class="m get">GET</span>
+    <span class="ep-path"><code>/api/routines</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">List routines</span>
+  </summary>
+  <div class="ep-body">
+<p>Returns the caller's routines array and the current revision. Only accessible with a routines-scoped write token (<code>ogw_…</code>).</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">The routines list and revision.<span class="r-sig">{ routines: object[], rev: integer }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The request carries a scoped token that cannot access this route. For example, a routines-scoped write token (<code>Authorization: Bearer ogw_…</code>) attempting to access routes outside its allowed set.<span class="r-sig"><code>{&quot;error&quot;:&quot;this token cannot access this route&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-putRoutine">
+  <summary>
+    <span class="m put">PUT</span>
+    <span class="ep-path"><code>/api/routines/{id}</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Create or update a routine</span>
+  </summary>
+  <div class="ep-body">
+<p>Creates a new routine or updates an existing one. Only accessible with a routines-scoped write token (<code>ogw_…</code>). Validates that all exercise IDs exist in the catalogue or in the user's custom exercises. Supports concurrency control with <code>baseRev</code>. References in <code>week</code>, <code>dayPlan</code>, <code>queue</code> and <code>rotation</code> are preserved.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">routine<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc">Must match the URL path id.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.name<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc">Routine name.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex<em class="p-req" title="required">required</em></span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc">Array of exercise configurations.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].id<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string</span>
+    <span class="p-desc">Exercise id from catalogue or customEx.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].sets</span>
+    <span class="p-type">integer</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].reps</span>
+    <span class="p-type">integer</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].weight</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].mode</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">baseRev</span>
+    <span class="p-type">integer | null</span>
+    <span class="p-desc">The revision this client last read. Omit or null for an unconditional overwrite.</span>
+  </div>
+</div>
+<pre><code>{
+  &quot;routine&quot;: {
+    &quot;id&quot;: &quot;r1&quot;,
+    &quot;name&quot;: &quot;Push&quot;,
+    &quot;ex&quot;: [
+      {
+        &quot;id&quot;: &quot;0025&quot;,
+        &quot;sets&quot;: 3,
+        &quot;reps&quot;: 5,
+        &quot;weight&quot;: 60
+      }
+    ]
+  },
+  &quot;baseRev&quot;: 3
+}</code></pre>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Saved.<span class="r-sig">{ ok: always true, routine: object, rev: integer }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">Bad request (invalid routine structure, exercise not found, etc).</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The request carries a scoped token that cannot access this route. For example, a routines-scoped write token (<code>Authorization: Bearer ogw_…</code>) attempting to access routes outside its allowed set.<span class="r-sig"><code>{&quot;error&quot;:&quot;this token cannot access this route&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Conflict (baseRev mismatch).</span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-deleteRoutine">
+  <summary>
+    <span class="m delete">DELETE</span>
+    <span class="ep-path"><code>/api/routines/{id}</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Delete a routine</span>
+  </summary>
+  <div class="ep-body">
+<p>Deletes a routine and cleans up all references to it in <code>week</code>, <code>dayPlan</code>, <code>queue</code> and <code>rotation</code>. Only accessible with a routines-scoped write token (<code>ogw_…</code>). Supports concurrency control with <code>baseRev</code>.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session: the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">baseRev</span>
+    <span class="p-type">integer | null</span>
+    <span class="p-desc">The revision this client last read. Omit or null for an unconditional delete.</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Deleted.<span class="r-sig">{ ok: always true, rev: integer }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The request carries a scoped token that cannot access this route. For example, a routines-scoped write token (<code>Authorization: Bearer ogw_…</code>) attempting to access routes outside its allowed set.<span class="r-sig"><code>{&quot;error&quot;:&quot;this token cannot access this route&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">404</span>
+    <span class="p-desc">Routine not found.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">Conflict (baseRev mismatch).</span>
   </div>
     </div>
   </div>
@@ -3356,7 +3540,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <summary>
     <span class="sch-name"><code>ReadToken</code></span>
     <span class="ep-chev" aria-hidden="true"></span>
-    <span class="ep-sum">A read-only token as the list shows it, never the token itself.</span>
+    <span class="ep-sum">A scoped token as the list shows it, never the token itself.</span>
   </summary>
   <div class="ep-body">
 
@@ -3370,6 +3554,11 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-name">name</span>
     <span class="p-type">string</span>
     <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">scope</span>
+    <span class="p-type">&quot;read&quot; | &quot;routines&quot;</span>
+    <span class="p-desc">Token scope: read for read-only, routines for read+write routines.</span>
   </div>
   <div class="prow">
     <span class="p-name">created</span>

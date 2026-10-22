@@ -179,6 +179,7 @@ body.no-tabbar #app{padding-bottom:calc(24px + var(--sab))}
 body.no-tabbar.resting #app{padding-bottom:calc(96px + var(--sab))}
 .workout-end-spacer{height:0}
 @keyframes viewfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes og-spin{to{transform:rotate(360deg)}}
 #app.vfade{animation:viewfade var(--med) var(--ease)}
 
 /* Connection indicator (components/SyncBanner.jsx): pinned under the status bar for as long as
@@ -2135,3 +2136,79 @@ button.wl-summary{width:100%;padding:0 0 10px;text-align:start;border-radius:var
 [dir="rtl"] *{letter-spacing:0}
 .exfix-link{display:inline-flex;align-items:center;gap:5px;margin:14px 0 4px;color:var(--label-3);text-decoration:none}
 .list .similar-label{margin:16px 2px 6px;grid-column:1/-1}
+
+/* ------------------------------------------------------------ API tokens -- */
+/* Settings → Account → API tokens (components/ApiTokens.jsx). The light theme's badge, warning
+   and text colours are fixed values that clear 4.5:1 on their own fill or on white; the dark
+   theme keeps the system palette, where the darker fixed values would fall short. */
+.btn.secondary{background:var(--surface-2);color:var(--label);box-shadow:inset 0 0 0 1px var(--sep-op)}
+.btn.secondary:active{background:var(--surface-3)}
+.btn.destructive{background:#c62828;color:#fff}
+.btn.destructive:active{background:#a51f1f}
+.tok-empty{font-size:15px;line-height:1.5;color:var(--label-2);padding:0 4px;margin-bottom:18px;text-align:start}
+.tok-list{margin-top:16px}
+.tok-card{background:var(--surface);border-radius:var(--r-card);padding:6px 16px 16px;margin-bottom:12px;min-width:0}
+.tok-card.expired .tok-dim{opacity:.55}
+.tok-head{display:flex;align-items:flex-start;gap:4px}
+.tok-name{flex:1;min-width:0;padding-top:10px;font-size:16px;font-weight:600;line-height:1.3;overflow-wrap:anywhere}
+.tok-badges{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 10px}
+.tok-badge{display:inline-block;padding:3px 9px;border-radius:6px;font-size:13px;font-weight:600;line-height:1.35}
+.tok-badge.routines{background:#e3f4e8;color:#1f7a3a}
+.tok-badge.read{background:#e3ecfb;color:#1d5fd1}
+.tok-badge.expired{background:#ededed;color:#6b6b6b}
+.tok-meta{font-size:13px;line-height:1.45;color:var(--label-2)}
+.tok-warn{color:var(--orange);font-weight:600}
+.tok-menu{position:relative;flex:none;margin-inline-end:-12px}
+.tok-more{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:none;color:var(--label-2);font-size:22px;line-height:1}
+.tok-more:active,.tok-more[aria-expanded="true"]{background:var(--surface-2)}
+.tok-pop{
+  position:absolute;top:46px;inset-inline-end:4px;z-index:5;min-width:200px;padding:6px;
+  background:var(--bg-el);border-radius:var(--r);box-shadow:0 12px 32px -8px rgba(0,0,0,.35),0 0 0 .5px var(--sep-op);
+}
+.tok-pop-i{display:flex;align-items:center;width:100%;min-height:44px;padding:0 12px;border-radius:var(--r-sm);background:none;font-size:15px;font-weight:600;text-align:start}
+.tok-pop-i:active{background:var(--surface-2)}
+.tok-pop-i.danger{color:var(--red)}
+.tok-sheet-h{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.tok-sheet-h h3{flex:1;min-width:0;margin:0;font-size:20px;font-weight:600;letter-spacing:-.021em}
+.tok-x{flex:none;width:44px;height:44px;margin:-8px -10px -8px 0;display:flex;align-items:center;justify-content:center;border-radius:50%;background:none;color:var(--label-2);font-size:20px}
+.tok-x:active{background:var(--surface-2)}
+.tok-field{margin:0 0 18px;padding:0;border:0;min-width:0}
+.tok-label{display:block;margin-bottom:8px;padding:0;font-size:14px;font-weight:600;color:var(--label)}
+.tok-input{width:100%;min-height:44px;font-size:16px}
+.center .tok-input{background:var(--surface-2)}
+.tok-radio{display:flex;align-items:flex-start;gap:12px;min-height:44px;padding:14px;border:2px solid var(--sep);border-radius:var(--r);cursor:pointer}
+.tok-radio+.tok-radio{margin-top:10px}
+.tok-radio.on{border-color:var(--acc);background:var(--acc-soft)}
+.tok-radio input{flex:none;width:20px;height:20px;margin:1px 0 0;accent-color:var(--acc)}
+.tok-radio-t{display:block;margin-bottom:3px;font-size:15px;font-weight:600}
+.tok-radio-s{display:block;font-size:13px;line-height:1.4;color:var(--label-2)}
+.tok-err{margin:8px 0 12px;font-size:14px;line-height:1.4;color:var(--red)}
+.tok-actions{display:flex;flex-direction:column;gap:8px}
+.tok-dialog-t{margin-bottom:10px;font-size:20px;font-weight:600;letter-spacing:-.021em;text-align:center}
+.tok-dialog-p{margin-bottom:20px;font-size:15px;line-height:1.5;color:var(--label-2);text-align:center}
+.tok-alert{margin-bottom:16px;padding:12px 14px;border-radius:var(--r);background:#fff4d6;color:#5c4400;font-size:14px;font-weight:600;line-height:1.45}
+.tok-secret{
+  margin-bottom:16px;padding:14px 16px;border-radius:var(--r);background:var(--surface-2);color:var(--label);
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:14px;line-height:1.6;
+  overflow-wrap:anywhere;word-break:break-all;-webkit-user-select:all;user-select:all;
+}
+.tok-copy-live{margin-bottom:8px}
+.tok-copy{min-height:52px}
+.tok-skel{height:116px;margin-bottom:12px;border-radius:var(--r-card);background:var(--surface);animation:tok-pulse 1.1s ease-in-out infinite alternate}
+@keyframes tok-pulse{from{opacity:.4}to{opacity:.85}}
+.tok-spin{display:inline-block;width:16px;height:16px;margin-inline-end:8px;vertical-align:-2px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:og-spin .7s linear infinite}
+.center:has(.tok-form){width:min(92vw,440px)}
+.center:has(.tok-created){width:min(92vw,400px)}
+:root[data-theme="light"] .tok-empty,
+:root[data-theme="light"] .tok-meta,
+:root[data-theme="light"] .tok-radio-s,
+:root[data-theme="light"] .tok-dialog-p{color:#5f5f66}
+:root[data-theme="light"] .tok-warn{color:#b35c00}
+:root[data-theme="light"] .tok-pop{background:#fff}
+:root[data-theme="light"] .tok-pop-i.danger,
+:root[data-theme="light"] .tok-err{color:#c62828}
+@media (min-width:1000px){
+  .tok-actions{flex-direction:row}
+  .tok-actions .btn{flex:1}
+}
+@media (prefers-reduced-motion:reduce){.tok-skel,.tok-spin{animation:none}}

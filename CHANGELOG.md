@@ -4,6 +4,14 @@
 
 ### API
 
+- **Routines write tokens**: Create scoped tokens (`ogw_…`) that can read and write routines
+  without accessing workouts, settings, or other state. Made via `POST /api/account/read-tokens`
+  with `scope: "routines"`. Three new endpoints: `GET /api/routines` (list routines),
+  `PUT /api/routines/{id}` (create or update a routine), and `DELETE /api/routines/{id}`
+  (delete a routine). All operations validate exercise IDs against the catalogue and custom
+  exercises, enforce concurrency control with `baseRev`, and clean up references in `week`,
+  `dayPlan`, `queue`, and `rotation` on delete. Read-only tokens (`ogr_…`) remain unchanged
+  and cannot access the new write endpoints.
 - **Resolved data view for read tokens**: `GET /api/data` now accepts `?resolve=1` (or 
   `?include=catalogue`) to return fully resolved exercise data in one call. The `resolved` 
   object includes exercise names, muscles, equipment, detailed workout/routine information, 

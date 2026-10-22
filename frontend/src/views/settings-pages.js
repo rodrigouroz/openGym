@@ -21,6 +21,7 @@ export const PAGES = {
   about: { title: 'About & updates', icon: 'info', tint: 'var(--grey)' },
   account: { title: 'Account', icon: 'personCircle', tint: 'var(--grey)' },
   advanced: { title: 'Fine-tuning', icon: 'wrench', tint: 'var(--grey)', parent: 'workout' },
+  tokens: { title: 'API tokens', icon: 'key', tint: 'var(--teal)', parent: 'account' },
 }
 export const PAGE_IDS = Object.keys(PAGES)
 
@@ -35,6 +36,8 @@ export const ROOT_GROUPS = [['workout', 'alerts', 'reminders'], ['plan', 'units'
 export function pageVisible(page, ctx) {
   if (page === 'reminders') return !!(ctx.user || ctx.mobile)
   if (page === 'coach') return !!ctx.mobile
+  // The server's tokens, managed with a browser session (a paired phone has none to offer).
+  if (page === 'tokens') return !!ctx.user && !ctx.mobile && !ctx.demo
   return page in PAGES
 }
 
@@ -130,6 +133,7 @@ export const SEARCH = [
   { page: 'account', title: 'Sync now', icon: 'reset', tint: 'var(--acc)', kw: 'server sync upload refresh status connection', when: c => !!c.user && !c.demo && c.synced },
   { page: 'account', title: 'Passkeys', icon: 'fingerprint', tint: 'var(--acc)', kw: 'passkey security login', when: signedInWeb },
   { page: 'account', title: 'Add another device', icon: 'qr', tint: 'var(--blue)', kw: 'device link code phone computer', when: signedInWeb },
+  { page: 'account', title: 'API tokens', icon: 'key', tint: 'var(--teal)', kw: 'api token integration ogr ogw read routines', when: signedInWeb },
   { page: 'account', title: 'Pair the mobile app', icon: 'qr', tint: 'var(--blue)', kw: 'pair phone app android iphone', when: signedInWeb },
   { page: 'account', title: 'Password', icon: 'key', tint: 'var(--orange)', kw: 'password login', when: c => signedInWeb(c) && c.pwOn },
   { page: 'account', title: 'Sign out', icon: 'signOut', tint: 'var(--red)', kw: 'log out logout sign out', when: signedInWeb },
