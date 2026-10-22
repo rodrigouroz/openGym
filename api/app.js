@@ -29,7 +29,7 @@ import {
 } from './read-tokens.js';
 import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from './media.js';
 import { effectiveRoutineId } from './queue.js';
-import { stampPut } from './sync-stamps.js';
+import { stampPut, stampEntry, highestStamp } from './sync-stamps.js';
 import { excusedOn, nudgeFor, nudgeWindowOpen, toneOf } from './nudge.js';
 // Bundled into the Worker by Wrangler; loaded from disk beside app.js under Docker/Node.
 // Do not read this via the injectable `fs` — on Cloudflare that is Durable Object storage,
@@ -2686,28 +2686,39 @@ const routes = {
       return json(res, 409, { error: 'conflict', rev: curRev, routines: state?.routines || [] });
     }
     
-    // Update or create the routine
+    // Stamp the routine with sync metadata (_ts and _f) so a later client push with an older
+    // copy cannot overwrite this write (sync-stamps.js stampEntry / stampPut).
+    const now = Math.max(Date.now(), highestStamp(state) + 1);
     const newState = { ...state };
-    newState.routines = newState.routines || [];
+    newState.routines = [...(newState.routines || [])];
     const index = newState.routines.findIndex(r => r.id === routineId);
-    if (index >= 0) {
-      newState.routines[index] = routine;
-    } else {
-      newState.routines.push(routine);
+    const oldRoutine = index >= 0 ? newState.routines[index] : null;
+    const stampedRoutine = stampEntry(oldRoutine, { ...routine }, now);
+
+    if (index >= 0) newState.routines[index] = stampedRoutine;
+    else newState.routines.push(stampedRoutine);
+
+    // Recreating a deleted id is an add-back: clear the positive tombstone so applyDeletions
+    // on the next merge does not drop the routine the token just wrote.
+    const priorDel = Number(state.deleted?.routines?.[routineId]) || 0;
+    if (priorDel > 0) {
+      newState.deleted = {
+        ...(state.deleted || {}),
+        routines: { ...(state.deleted?.routines || {}), [routineId]: -now },
+      };
     }
-    
-    // Save the state
+
     newState._rev = curRev + 1;
-    newState._ts = Date.now();
+    newState._ts = now;
     newState._wids = [...(Array.isArray(state._wids) ? state._wids : []), ...(state._wid ? [state._wid] : [])]
       .filter(x => typeof x === 'string').slice(-WID_KEEP);
     newState._wid = crypto.randomBytes(8).toString('hex');
-    
+
     const file = JSON.stringify(newState);
     atomicWrite(stateFile(session.user.id), file);
     stateCache.delete(session.user.id);
-    
-    json(res, 200, { ok: true, routine, rev: newState._rev });
+
+    json(res, 200, { ok: true, routine: stampedRoutine, rev: newState._rev });
   },
 
   'DELETE /api/routines/{id}': async (req, res) => {
@@ -2721,8 +2732,8 @@ const routes = {
     const curRev = state?._rev || 0;
     
     // Check if routine exists
-    const index = (state.routines || []).findIndex(r => r.id === routineId);
-    if (index < 0) return json(res, 404, { error: 'routine not found', code: 'not-found' });
+    const routine = (state.routines || []).find(r => r.id === routineId);
+    if (!routine) return json(res, 404, { error: 'routine not found', code: 'not-found' });
     
     // Check revision for concurrency control
     const body = await readBody(req);
@@ -2730,49 +2741,53 @@ const routes = {
       return json(res, 409, { error: 'conflict', rev: curRev, routines: state?.routines || [] });
     }
     
-    // Remove the routine and clean up references (following deleteRoutine logic from frontend)
+    const now = Math.max(Date.now(), highestStamp(state) + 1);
+    const routineTime = Number(routine._ts) || 0;
+    const delAt = Math.max(now, routineTime + 1);
+
+    // Same removal the app records (lib/routines.js deleteRoutine + stampDeletions): drop the
+    // routine, write a positive tombstone, and clear week/dayPlan/queue/rotation pointers so an
+    // offline phone that merges the next pull cannot resurrect it.
     const newState = { ...state };
-    newState.routines = newState.routines.filter(r => r.id !== routineId);
-    
-    // Clean up week references
-    Object.keys(newState.week || {}).forEach(d => {
-      const ids = [].concat(newState.week[d]);
-      if (ids.includes(routineId)) {
+    newState.routines = (newState.routines || []).filter(r => r.id !== routineId);
+    newState.deleted = {
+      ...(state.deleted || {}),
+      routines: { ...(state.deleted?.routines || {}), [routineId]: delAt },
+    };
+
+    if (state.week) {
+      newState.week = { ...state.week };
+      for (const d of Object.keys(newState.week)) {
+        const ids = [].concat(newState.week[d]);
+        if (!ids.includes(routineId)) continue;
         const next = ids.filter(rid => rid !== routineId);
         if (next.length) newState.week[d] = next;
         else delete newState.week[d];
       }
-    });
-    
-    // Clean up dayPlan references
-    Object.keys(newState.dayPlan || {}).forEach(iso => {
-      if (newState.dayPlan[iso] === routineId) delete newState.dayPlan[iso];
-    });
-    
-    // Clean up queue references
-    if (Array.isArray(newState.queue?.ids)) {
-      newState.queue.ids = newState.queue.ids.filter(id => id !== routineId);
     }
-    
-    // Clean up rotation references
-    if (Array.isArray(newState.rotation?.sequence)) {
-      newState.rotation.sequence = newState.rotation.sequence.filter(id => id !== routineId);
+    if (state.dayPlan) {
+      newState.dayPlan = { ...state.dayPlan };
+      for (const iso of Object.keys(newState.dayPlan)) {
+        if (newState.dayPlan[iso] === routineId) delete newState.dayPlan[iso];
+      }
     }
-    
-    // Save the state
+    if (Array.isArray(state.queue?.ids)) {
+      newState.queue = { ...state.queue, ids: state.queue.ids.filter(id => id !== routineId) };
+    }
+    if (Array.isArray(state.rotation?.sequence)) {
+      newState.rotation = { ...state.rotation, sequence: state.rotation.sequence.filter(id => id !== routineId) };
+    }
+
     newState._rev = curRev + 1;
-    newState._ts = Date.now();
+    newState._ts = now;
     newState._wids = [...(Array.isArray(state._wids) ? state._wids : []), ...(state._wid ? [state._wid] : [])]
       .filter(x => typeof x === 'string').slice(-WID_KEEP);
     newState._wid = crypto.randomBytes(8).toString('hex');
-    if (state._wid) {
-      newState._wids = [state._wid, ...(state._wids || [])].slice(0, 20);
-    }
-    
+
     const file = JSON.stringify(newState);
     atomicWrite(stateFile(session.user.id), file);
     stateCache.delete(session.user.id);
-    
+
     json(res, 200, { ok: true, rev: newState._rev });
   },
 

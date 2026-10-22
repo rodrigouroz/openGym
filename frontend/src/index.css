@@ -179,6 +179,7 @@ body.no-tabbar #app{padding-bottom:calc(24px + var(--sab))}
 body.no-tabbar.resting #app{padding-bottom:calc(96px + var(--sab))}
 .workout-end-spacer{height:0}
 @keyframes viewfade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+@keyframes og-spin{to{transform:rotate(360deg)}}
 #app.vfade{animation:viewfade var(--med) var(--ease)}
 
 /* Connection indicator (components/SyncBanner.jsx): pinned under the status bar for as long as

@@ -230,3 +230,97 @@ test('routines token with missing exercises shows helpful error', async t => {
   assert.equal(r.body.code, 'exercise-not-found');
   assert.ok(r.body.error.includes('nonexistent'));
 });
+
+test('token write wins over client push with stale copy (sync stamps)', async t => {
+  const h = await startServer(t);
+  const { token } = await h.create('u_one', { name: 'Pulso', scope: 'routines' });
+
+  const initial = await h.req('GET', '/api/data', cookie('u_one'));
+  assert.equal(initial.status, 200);
+  // An updated app always carries an `edited` map; stampPut only protects per-field stamps
+  // against a writer that sends one (or entry `_f`). Empty object is enough.
+  const clientCopy = { ...initial.body.state, edited: { ...(initial.body.state.edited || {}) } };
+  const baseRev = initial.body.rev;
+
+  const tokenUpdate = await h.req('PUT', '/api/routines/r1', bearer(token), {
+    routine: {
+      id: 'r1',
+      name: 'Push Updated by Token',
+      ex: [{ id: '0025', sets: 3, reps: 5, weight: 60 }]
+    },
+    baseRev
+  });
+  assert.equal(tokenUpdate.status, 200);
+  assert.ok(tokenUpdate.body.routine._ts, 'PUT stamps _ts');
+  assert.ok(tokenUpdate.body.routine._f?.name, 'PUT stamps _f for changed fields');
+  const tokenRev = tokenUpdate.body.rev;
+
+  const clientPush = await h.req('PUT', '/api/data', cookie('u_one'), {
+    state: clientCopy,
+    baseRev,
+    stamped: false
+  });
+  assert.equal(clientPush.status, 409);
+
+  const clientRetry = await h.req('PUT', '/api/data', cookie('u_one'), {
+    state: clientCopy,
+    baseRev: tokenRev,
+    stamped: false
+  });
+  assert.equal(clientRetry.status, 200);
+
+  const final = await h.req('GET', '/api/data', cookie('u_one'));
+  assert.equal(final.status, 200);
+  const routine = final.body.state.routines.find(r => r.id === 'r1');
+  assert.ok(routine, 'routine should exist');
+  assert.equal(routine.name, 'Push Updated by Token', 'token change should win over stale client copy');
+  assert.ok(routine._ts, 'routine should have _ts stamp');
+  assert.ok(routine._f?.name, 'routine should keep the token\'s per-field stamp');
+});
+
+test('deleted routine stays deleted after client merges the conflict (tombstone)', async t => {
+  const h = await startServer(t);
+  const { token } = await h.create('u_one', { name: 'Pulso', scope: 'routines' });
+
+  const initial = await h.req('GET', '/api/data', cookie('u_one'));
+  const clientCopy = { ...initial.body.state, edited: { ...(initial.body.state.edited || {}) } };
+  const baseRev = initial.body.rev;
+
+  const tokenDelete = await h.req('DELETE', '/api/routines/r1', bearer(token), { baseRev });
+  assert.equal(tokenDelete.status, 200);
+  const tokenRev = tokenDelete.body.rev;
+
+  let state = h.state();
+  assert.equal(state.routines.length, 0, 'routine should be removed');
+  assert.ok(Number(state.deleted?.routines?.r1) > 0, 'routine should be in deleted.routines');
+  assert.equal(state.week?.[1], undefined, 'week pointer cleaned up');
+
+  // Stale baseRev → 409 with the tombstoned document (what the app merges against).
+  const conflict = await h.req('PUT', '/api/data', cookie('u_one'), {
+    state: clientCopy,
+    baseRev,
+    stamped: false
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal((conflict.body.state.routines || []).length, 0);
+  assert.ok(Number(conflict.body.state.deleted?.routines?.r1) > 0);
+
+  // After mergeStates/applyDeletions the phone pushes without the routine and keeps the tombstone.
+  const merged = {
+    ...clientCopy,
+    routines: conflict.body.state.routines,
+    deleted: conflict.body.state.deleted,
+    week: conflict.body.state.week,
+    dayPlan: conflict.body.state.dayPlan,
+  };
+  const clientRetry = await h.req('PUT', '/api/data', cookie('u_one'), {
+    state: merged,
+    baseRev: tokenRev,
+    stamped: true
+  });
+  assert.equal(clientRetry.status, 200);
+
+  state = h.state();
+  assert.equal(state.routines.length, 0, 'routine should stay deleted');
+  assert.ok(Number(state.deleted?.routines?.r1) > 0, 'deletion tombstone should be preserved');
+});
