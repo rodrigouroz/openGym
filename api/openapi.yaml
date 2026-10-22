@@ -679,12 +679,14 @@ paths:
     post:
       tags: [auth]
       operationId: createReadToken
-      summary: Make a read-only token
+      summary: Make a scoped token
       description: |
         Returns the token **once**, in `token`; only its SHA-256 is stored, so it cannot be
         shown again. Without `expiresAt` it is good until revoked, or until the profile signs
         out everywhere. At most 20 live tokens per profile. Audited as
-        `auth.readtoken.create` with the token's name.
+        `auth.readtoken.create` with the token's name. The `scope` determines what the token
+        can do: `read` (default) for read-only access, `routines` for reading and writing
+        routines.
       security: [{ cookieAuth: [] }, { bearerAuth: [] }]
       requestBody:
         required: true
@@ -698,12 +700,19 @@ paths:
                   type: string
                   maxLength: 60
                   description: What the token is for, as the list shows it (trimmed).
+                scope:
+                  type: string
+                  enum: [read, routines]
+                  default: read
+                  description: >-
+                    Token scope: `read` for read-only access (default), `routines` for
+                    reading and writing routines.
                 expiresAt:
                   oneOf: [{ type: string, format: date-time }, { type: 'null' }]
                   description: >-
                     When the token stops working. In the future and at most ten years away;
                     absent or null for no expiry.
-            example: { name: "My assistant", expiresAt: "2027-01-01T00:00:00.000Z" }
+            example: { name: "Pulso", scope: "routines", expiresAt: "2027-01-01T00:00:00.000Z" }
       responses:
         '201':
           description: Made. The token is in this answer and nowhere else.
@@ -1850,6 +1859,160 @@ paths:
                   rev: { type: integer }
                   wid: { type: string, description: 'The write id (`_wid`) of the stored document; absent before its first write.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/routines:
+    get:
+      tags: [data]
+      operationId: getRoutines
+      summary: List routines
+      description: >-
+        Returns the caller's routines array and the current revision. Only accessible with
+        a routines-scoped write token (`ogw_…`).
+      security: [{ writeRoutinesTokenAuth: [] }]
+      responses:
+        '200':
+          description: The routines list and revision.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  routines: { type: array, items: { type: object }, description: 'The routines array from state.' }
+                  rev: { type: integer, description: 'Current revision of the state.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ScopeDenied' }
+
+  /api/routines/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The routine id.
+        schema: { type: string }
+    put:
+      tags: [data]
+      operationId: putRoutine
+      summary: Create or update a routine
+      description: |
+        Creates a new routine or updates an existing one. Only accessible with a
+        routines-scoped write token (`ogw_…`). Validates that all exercise IDs exist in
+        the catalogue or in the user's custom exercises. Supports concurrency control
+        with `baseRev`. References in `week`, `dayPlan`, `queue` and `rotation` are
+        preserved.
+      security: [{ writeRoutinesTokenAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [routine]
+              properties:
+                routine:
+                  type: object
+                  required: [id, name, ex]
+                  properties:
+                    id: { type: string, description: 'Must match the URL path id.' }
+                    name: { type: string, description: 'Routine name.' }
+                    ex:
+                      type: array
+                      description: 'Array of exercise configurations.'
+                      items:
+                        type: object
+                        required: [id]
+                        properties:
+                          id: { type: string, description: 'Exercise id from catalogue or customEx.' }
+                          sets: { type: integer }
+                          reps: { type: integer }
+                          weight: { type: number }
+                          mode: { type: string }
+                baseRev:
+                  oneOf: [{ type: integer }, { type: 'null' }]
+                  description: >-
+                    The revision this client last read. Omit or null for an
+                    unconditional overwrite.
+            example:
+              routine: { id: "r1", name: "Push", ex: [{ id: "0025", sets: 3, reps: 5, weight: 60 }] }
+              baseRev: 3
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  routine: { type: object, description: 'The saved routine.' }
+                  rev: { type: integer, description: 'New revision.' }
+        '400':
+          description: Bad request (invalid routine structure, exercise not found, etc).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ScopeDenied' }
+        '409':
+          description: Conflict (baseRev mismatch).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, const: conflict }
+                  rev: { type: integer }
+                  routines: { type: array }
+    delete:
+      tags: [data]
+      operationId: deleteRoutine
+      summary: Delete a routine
+      description: |
+        Deletes a routine and cleans up all references to it in `week`, `dayPlan`,
+        `queue` and `rotation`. Only accessible with a routines-scoped write token
+        (`ogw_…`). Supports concurrency control with `baseRev`.
+      security: [{ writeRoutinesTokenAuth: [] }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                baseRev:
+                  oneOf: [{ type: integer }, { type: 'null' }]
+                  description: >-
+                    The revision this client last read. Omit or null for an
+                    unconditional delete.
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: true }
+                  rev: { type: integer, description: 'New revision.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/ScopeDenied' }
+        '404':
+          description: Routine not found.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string }
+                  code: { type: string, const: not-found }
+        '409':
+          description: Conflict (baseRev mismatch).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, const: conflict }
+                  rev: { type: integer }
+                  routines: { type: array }
 
   /api/media/{hash}:
     parameters:
@@ -3254,6 +3417,14 @@ components:
         `Authorization: Bearer <token>`. Accepted only by `GET /api/data`,
         `GET /api/data/rev` and `GET /api/media/{hash}`; any other request carrying one is
         `403 read-only`.
+    writeRoutinesTokenAuth:
+      type: http
+      scheme: bearer
+      description: >-
+        A routines-scoped write token (`ogw_…`, from `POST /api/account/read-tokens` with
+        `scope: routines`) as `Authorization: Bearer <token>`. Accepted only by
+        `GET /api/routines`, `PUT /api/routines/{id}` and `DELETE /api/routines/{id}`, plus
+        the read-only routes; any other request carrying one is `403 scope-denied`.
 
   responses:
     Unauthorized:
@@ -3277,6 +3448,15 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
           example: { error: "this token can only read", code: "read-only" }
+    ScopeDenied:
+      description: >-
+        The request carries a scoped token that cannot access this route. For example, a
+        routines-scoped write token (`Authorization: Bearer ogw_…`) attempting to access
+        routes outside its allowed set.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: "this token cannot access this route", code: "scope-denied" }
     CoachOff:
       description: >-
         The Coach is not set up on this instance (switched off, or no provider connected).
@@ -3415,10 +3595,11 @@ components:
 
     ReadToken:
       type: object
-      description: A read-only token as the list shows it, never the token itself.
+      description: A scoped token as the list shows it, never the token itself.
       properties:
         id: { type: string, description: 'What `DELETE /api/account/read-tokens?id=` takes.' }
         name: { type: string }
+        scope: { type: string, enum: [read, routines], description: 'Token scope: read for read-only, routines for read+write routines.' }
         created: { type: string, format: date-time }
         expires: { oneOf: [{ type: string, format: date-time }, { type: 'null' }], description: Null for no expiry. }
         lastUsed: { oneOf: [{ type: string, format: date-time }, { type: 'null' }], description: 'Updated at most every ten minutes.' }

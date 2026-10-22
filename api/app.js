@@ -25,7 +25,7 @@ import {
 } from './passkeys-store.js';
 import { createDeviceLink, findDeviceLink, burnDeviceLink, dropDeviceLinks } from './device-link.js';
 import {
-  isReadToken, readTokenRequest, createReadToken, listReadTokens, findReadToken, revokeReadToken, dropReadTokens
+  isReadToken, isWriteRoutinesToken, isScopedToken, readTokenRequest, createReadToken, listReadTokens, findReadToken, revokeReadToken, dropReadTokens
 } from './read-tokens.js';
 import { createMediaStore, mediaLimits, mediaConfig, MediaError, HASH_RE } from './media.js';
 import { effectiveRoutineId } from './queue.js';
@@ -860,15 +860,16 @@ function cookieToken(req) {
   }
   return null;
 }
-// The session behind a request: { user, exp, bearer } — `bearer` when it came in an Authorization
-// header (a paired phone) rather than the cookie — or null for no valid session at all.
+// The session behind a request: { user, exp, bearer, tokenScope } — `bearer` when it came in an
+// Authorization header (a paired phone) rather than the cookie. `tokenScope` is 'read', 'routines'
+// or null for a session cookie. Null for no valid session at all.
 function sessionOf(req) {
   // The paired mobile app has no cookie jar shared with the API's origin, so it carries the same
   // signed token in an Authorization header instead — same payload, same verification below.
   const cookie = cookieToken(req);
   const tok = cookie || bearerToken(req);
   if (!tok) return null;
-  if (!cookie && isReadToken(tok)) return readTokenSession(req, tok);
+  if (!cookie && isScopedToken(tok)) return readTokenSession(req, tok);
   const payload = verifySig(tok);
   if (!payload) return null;
   const [uid, exp, ver] = payload.split(':');
@@ -880,21 +881,26 @@ function sessionOf(req) {
   // payload (it still had to pass the HMAC, so this is belt-and-braces) and is refused outright.
   const claimed = ver === undefined ? 0 : Number(ver);
   if (!Number.isInteger(claimed) || claimed !== sessionVersion(user)) return null;
-  return { user, exp: +exp, bearer: !cookie };
+  return { user, exp: +exp, bearer: !cookie, tokenScope: null };
 }
 function bearerToken(req) {
   const auth = req.headers.authorization || '';
   return auth.startsWith('Bearer ') ? auth.slice(7).trim() : null;
 }
-// The routes a read-only token may reach. The dispatcher refuses every other one with a 403 before
-// any handler runs, and marks the request it lets through (`readTokenOk`); a read token on a
+// The routes each token scope may reach. The dispatcher refuses every other one with a 403 before
+// any handler runs, and marks the request it lets through (`scopedTokenOk`); a scoped token on a
 // request without that mark is no session at all, so a route reached some other way stays closed.
 const READ_TOKEN_ROUTES = new Set(['GET /api/data', 'GET /api/data/rev', 'GET /api/media/{hash}']);
+const WRITE_ROUTINES_ROUTES = new Set([
+  'GET /api/data', 'GET /api/data/rev', 'GET /api/media/{hash}',
+  'GET /api/routines', 'PUT /api/routines/{id}', 'DELETE /api/routines/{id}'
+]);
 const READ_ONLY = { error: 'this token can only read', code: 'read-only' };
+const SCOPE_DENIED = { error: 'this token cannot access this route', code: 'scope-denied' };
 // `lastUsed` is what the owner sees in the list; written at most every ten minutes per token, the
 // same budget notePull keeps, since an integration may poll.
 function readTokenSession(req, token) {
-  if (!req.readTokenOk) return null;
+  if (!req.scopedTokenOk) return null;
   const row = findReadToken(db, token);
   const user = row && db.users.find(u => u.id === row.userId);
   if (!user || user.disabled) return null;
@@ -903,7 +909,7 @@ function readTokenSession(req, token) {
     row.lastUsed = new Date(now).toISOString();
     try { saveDb(); } catch (e) { console.error('db save failed', e.message); }
   }
-  return { user, exp: row.exp ?? Infinity, bearer: true };
+  return { user, exp: row.exp ?? Infinity, bearer: true, tokenScope: row.scope || 'read' };
 }
 function readSession(req) {
   return sessionOf(req)?.user || null;
@@ -2510,7 +2516,7 @@ const routes = {
     
     const url = new URL(req.url, 'http://x');
     const shouldResolve = url.searchParams.get('resolve') === '1' || url.searchParams.get('include') === 'catalogue';
-    const isReadToken = req.readTokenOk === true;
+    const isReadToken = req.scopedTokenOk === true;
     
     let clientState = forClient(state);
     
@@ -2635,6 +2641,139 @@ const routes = {
       try { MEDIA.noteState(user.id, body.state); } catch (e) { console.error('media noteState', e); }
     }
     json(res, 200, { ok: true, ts: body.state._ts || null, rev: curRev + 1, wid: body.state._wid });
+  },
+
+  // Routines endpoints for external integrations with write tokens
+  'GET /api/routines': async (req, res) => {
+    const session = sessionOf(req);
+    if (!session) return json(res, 401, { error: 'not signed in' });
+    if (session.tokenScope !== 'routines') return json(res, 403, SCOPE_DENIED);
+    const state = readStateStrict(session.user.id);
+    if (state === UNREADABLE) { console.error('state file unreadable for', session.user.id); return json(res, 503, { error: 'state unreadable' }); }
+    json(res, 200, { routines: state?.routines || [], rev: state?._rev || 0 });
+  },
+
+  'PUT /api/routines/{id}': async (req, res) => {
+    const session = sessionOf(req);
+    if (!session) return json(res, 401, { error: 'not signed in' });
+    if (session.tokenScope !== 'routines') return json(res, 403, SCOPE_DENIED);
+    const body = await readBody(req);
+    if (!body.routine || typeof body.routine !== 'object') return json(res, 400, { error: 'routine required' });
+    
+    const routine = body.routine;
+    const routineId = req.routineId;
+    
+    // Validate routine structure
+    if (routine.id !== routineId) return json(res, 400, { error: 'routine id does not match URL', code: 'id-mismatch' });
+    if (typeof routine.name !== 'string' || !routine.name.trim()) return json(res, 400, { error: 'routine name required', code: 'name-required' });
+    if (!Array.isArray(routine.ex)) return json(res, 400, { error: 'routine.ex must be an array', code: 'invalid-ex' });
+    
+    // Validate exercises exist in catalogue or customEx
+    const state = readStateStrict(session.user.id);
+    if (state === UNREADABLE) { console.error('state file unreadable for', session.user.id); return json(res, 503, { error: 'state unreadable' }); }
+    const curRev = state?._rev || 0;
+    
+    const customExIds = new Set((state.customEx || []).map(ex => ex.id));
+    for (const ex of routine.ex) {
+      if (!ex.id || typeof ex.id !== 'string') return json(res, 400, { error: 'exercise id required', code: 'exercise-id-required' });
+      if (!CATALOGUE.exercises?.[ex.id] && !customExIds.has(ex.id)) {
+        return json(res, 400, { error: `exercise ${ex.id} not found in catalogue or custom exercises`, code: 'exercise-not-found' });
+      }
+    }
+    
+    // Check revision for concurrency control
+    if (body.baseRev != null && body.baseRev !== curRev) {
+      return json(res, 409, { error: 'conflict', rev: curRev, routines: state?.routines || [] });
+    }
+    
+    // Update or create the routine
+    const newState = { ...state };
+    newState.routines = newState.routines || [];
+    const index = newState.routines.findIndex(r => r.id === routineId);
+    if (index >= 0) {
+      newState.routines[index] = routine;
+    } else {
+      newState.routines.push(routine);
+    }
+    
+    // Save the state
+    newState._rev = curRev + 1;
+    newState._ts = Date.now();
+    newState._wids = [...(Array.isArray(state._wids) ? state._wids : []), ...(state._wid ? [state._wid] : [])]
+      .filter(x => typeof x === 'string').slice(-WID_KEEP);
+    newState._wid = crypto.randomBytes(8).toString('hex');
+    
+    const file = JSON.stringify(newState);
+    atomicWrite(stateFile(session.user.id), file);
+    stateCache.delete(session.user.id);
+    
+    json(res, 200, { ok: true, routine, rev: newState._rev });
+  },
+
+  'DELETE /api/routines/{id}': async (req, res) => {
+    const session = sessionOf(req);
+    if (!session) return json(res, 401, { error: 'not signed in' });
+    if (session.tokenScope !== 'routines') return json(res, 403, SCOPE_DENIED);
+    
+    const routineId = req.routineId;
+    const state = readStateStrict(session.user.id);
+    if (state === UNREADABLE) { console.error('state file unreadable for', session.user.id); return json(res, 503, { error: 'state unreadable' }); }
+    const curRev = state?._rev || 0;
+    
+    // Check if routine exists
+    const index = (state.routines || []).findIndex(r => r.id === routineId);
+    if (index < 0) return json(res, 404, { error: 'routine not found', code: 'not-found' });
+    
+    // Check revision for concurrency control
+    const body = await readBody(req);
+    if (body.baseRev != null && body.baseRev !== curRev) {
+      return json(res, 409, { error: 'conflict', rev: curRev, routines: state?.routines || [] });
+    }
+    
+    // Remove the routine and clean up references (following deleteRoutine logic from frontend)
+    const newState = { ...state };
+    newState.routines = newState.routines.filter(r => r.id !== routineId);
+    
+    // Clean up week references
+    Object.keys(newState.week || {}).forEach(d => {
+      const ids = [].concat(newState.week[d]);
+      if (ids.includes(routineId)) {
+        const next = ids.filter(rid => rid !== routineId);
+        if (next.length) newState.week[d] = next;
+        else delete newState.week[d];
+      }
+    });
+    
+    // Clean up dayPlan references
+    Object.keys(newState.dayPlan || {}).forEach(iso => {
+      if (newState.dayPlan[iso] === routineId) delete newState.dayPlan[iso];
+    });
+    
+    // Clean up queue references
+    if (Array.isArray(newState.queue?.ids)) {
+      newState.queue.ids = newState.queue.ids.filter(id => id !== routineId);
+    }
+    
+    // Clean up rotation references
+    if (Array.isArray(newState.rotation?.sequence)) {
+      newState.rotation.sequence = newState.rotation.sequence.filter(id => id !== routineId);
+    }
+    
+    // Save the state
+    newState._rev = curRev + 1;
+    newState._ts = Date.now();
+    newState._wids = [...(Array.isArray(state._wids) ? state._wids : []), ...(state._wid ? [state._wid] : [])]
+      .filter(x => typeof x === 'string').slice(-WID_KEEP);
+    newState._wid = crypto.randomBytes(8).toString('hex');
+    if (state._wid) {
+      newState._wids = [state._wid, ...(state._wids || [])].slice(0, 20);
+    }
+    
+    const file = JSON.stringify(newState);
+    atomicWrite(stateFile(session.user.id), file);
+    stateCache.delete(session.user.id);
+    
+    json(res, 200, { ok: true, rev: newState._rev });
   },
 
   'GET /api/push/public-key': async (req, res) => json(res, 200, { key: vapid.publicKey }),
@@ -3019,10 +3158,17 @@ const server = http.createServer(async (req, res) => {
   // above stays a plain lookup, and so csrfOk and the catch-all see one name for every file.
   const mm = /^\/api\/media\/([0-9a-f]{64})$/.exec(url.pathname);
   if (mm) { key = req.method + ' /api/media/{hash}'; req.mediaHash = mm[1]; }
-  // Ahead of the 404, so a read-only token learns nothing about which other routes exist.
-  if (isReadToken(bearerToken(req))) {
+  // Routines with an id parameter: PUT /api/routines/r123 → PUT /api/routines/{id}
+  const rm = /^\/api\/routines\/([a-zA-Z0-9_-]+)$/.exec(url.pathname);
+  if (rm) { key = req.method + ' /api/routines/{id}'; req.routineId = rm[1]; }
+  // Ahead of the 404, so a scoped token learns nothing about which other routes exist.
+  const tok = bearerToken(req);
+  if (isReadToken(tok)) {
     if (!READ_TOKEN_ROUTES.has(key)) return answerAfterBody(req, res, 403, READ_ONLY);
-    req.readTokenOk = true;
+    req.scopedTokenOk = true;
+  } else if (isWriteRoutinesToken(tok)) {
+    if (!WRITE_ROUTINES_ROUTES.has(key)) return answerAfterBody(req, res, 403, SCOPE_DENIED);
+    req.scopedTokenOk = true;
   }
   const handler = routes[key];
   if (!handler) return answerAfterBody(req, res, 404, { error: 'not found' });

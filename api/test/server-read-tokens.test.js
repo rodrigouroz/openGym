@@ -73,8 +73,9 @@ test('a token is shown once, stored as a hash, listed without it, and reads the 
   const h = await startServer(t);
   const { token, readToken } = await h.create('u_one', { name: 'Assistant' });
   assert.match(token, /^ogr_[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(Object.keys(readToken).sort(), ['created', 'expires', 'id', 'lastUsed', 'name']);
+  assert.deepEqual(Object.keys(readToken).sort(), ['created', 'expires', 'id', 'lastUsed', 'name', 'scope']);
   assert.equal(readToken.name, 'Assistant');
+  assert.equal(readToken.scope, 'read');
   assert.equal(readToken.expires, null);
 
   const raw = fs.readFileSync(path.join(h.dataDir, 'db.json'), 'utf8');
