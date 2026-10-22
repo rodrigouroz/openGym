@@ -21,6 +21,7 @@ export const PAGES = {
   about: { title: 'About & updates', icon: 'info', tint: 'var(--grey)' },
   account: { title: 'Account', icon: 'personCircle', tint: 'var(--grey)' },
   advanced: { title: 'Fine-tuning', icon: 'wrench', tint: 'var(--grey)', parent: 'workout' },
+  tokens: { title: 'API tokens', icon: 'key', tint: 'var(--teal)', parent: 'account' },
 }
 export const PAGE_IDS = Object.keys(PAGES)
 
@@ -35,6 +36,8 @@ export const ROOT_GROUPS = [['workout', 'alerts', 'reminders'], ['plan', 'units'
 export function pageVisible(page, ctx) {
   if (page === 'reminders') return !!(ctx.user || ctx.mobile)
   if (page === 'coach') return !!ctx.mobile
+  // The server's tokens, managed with a browser session (a paired phone has none to offer).
+  if (page === 'tokens') return !!ctx.user && !ctx.mobile && !ctx.demo
   return page in PAGES
 }
 
