@@ -71,7 +71,9 @@ and a model. The binding needs no API key. The adapter supports Llama 3.3 70B FP
 (24k context), Llama 4 Scout (131k), and the default Gemma 4 26B A4B (256k,
 `@cf/google/gemma-4-26b-a4b-it`).
 `COACH_AI_MODEL` explicitly selects a deployment default when no admin model is stored; there
-is no automatic fallback between those models. A saved selection or `COACH_AI_MODEL` value of
+is no automatic fallback between those models. An explicit non-retired id, including
+`@cf/meta/llama-4-scout-17b-16e-instruct`, stays the called model and is not replaced by Gemma.
+A saved selection or `COACH_AI_MODEL` value of
 `@cf/deepseek-ai/deepseek-r1-distill-qwen-32b` is called as that Gemma model. Cloudflare
 retires the DeepSeek id on November 20, 2026. The notice first said November 15, 2026, then
 moved the date. The saved id is left on disk. Earlier live checks of that DeepSeek model

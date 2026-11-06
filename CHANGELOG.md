@@ -7,9 +7,10 @@
 - **Workers AI Coach default**: The default model is now Gemma 4 26B A4B
   (`@cf/google/gemma-4-26b-a4b-it`). Cloudflare retires
   `@cf/deepseek-ai/deepseek-r1-distill-qwen-32b` on November 20, 2026. A saved
-  selection of that id is called as Gemma and is not rewritten. Existing budget
-  receipts for it still resolve. Llama 3.3 70B, Llama 4 Scout, and Clef-flash
-  are unchanged.
+  selection of that id is called as Gemma and is not rewritten. An explicit
+  non-retired `COACH_AI_MODEL`, including Llama 4 Scout, stays the called model.
+  Existing budget receipts for the retired id still resolve. Llama 3.3 70B,
+  Llama 4 Scout, and Clef-flash are unchanged.
 
 ### API
 

@@ -174,6 +174,33 @@ test('a retired Workers AI id calls Gemma, chat content validates, and Llama kee
   assert.deepEqual(seen.at(-1).input.response_format, { type: 'json_object' });
 });
 
+test('an explicit Scout selection is called as Scout and is not replaced by Gemma', async t => {
+  const scout = '@cf/meta/llama-4-scout-17b-16e-instruct';
+  const h = setup(t);
+  const coach = createCoach({ fs: h.fs, env: { DATA_DIR: '/data', AI: h.ai, COACH_AI_BUDGET_USD: '5', COACH_AI_MODEL: scout }, defer() {} });
+  coach.cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: 4096, models: {} });
+  assert.equal(coach.cfgStore.modelFor(), scout);
+  h.write('scout');
+  coach.jobs.enqueue('scout', { kind: 'review' });
+  await coach.jobs.runQueued();
+  assert.equal(h.calls.at(-1).model, scout);
+  assert.equal(coach.cfgStore.load().models['workers-ai'], undefined);
+  coach.cfgStore.save({ models: { 'workers-ai': scout } });
+  h.write('scout-saved');
+  coach.jobs.enqueue('scout-saved', { kind: 'review' });
+  await coach.jobs.runQueued();
+  assert.equal(h.calls.at(-1).model, scout);
+  assert.equal(coach.cfgStore.load().models['workers-ai'], scout);
+  const seen = [];
+  const adapter = workersAI({ async run(model, input) { seen.push({ model, input }); return { response: '{"coach_contract":1}' }; } });
+  const schema = { type: 'object', properties: { days: { type: 'array' } } };
+  const called = await adapter.invoke({ prompt: 'synthetic', model: scout, schema });
+  assert.equal(called.code, 0);
+  assert.equal(seen[0].model, scout);
+  assert.equal(seen[0].input.response_format.json_schema.type, 'object');
+  assert.equal(seen[0].input.response_format.json_schema.name, undefined);
+});
+
 test('inference allowance persists across restart and forget, and is disabled by default', async t => {
   const h = setup(t); h.write('a');
   h.fs.writeFileSync('/data/coach-ai-budget.json', JSON.stringify({ day: new Date().toISOString().slice(0, 10), used: 10 }));
