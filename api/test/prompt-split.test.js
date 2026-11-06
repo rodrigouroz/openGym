@@ -76,10 +76,18 @@ test('the create schema caps the two arrays the validator caps, so a repeating m
 });
 
 test('older sessions in a review window are compacted, the recent ones keep full sets', () => {
-  const many = Array.from({ length: FULL_DETAIL_SESSIONS + 4 }, (_, i) => workout('2026-08-' + String(i + 1).padStart(2, '0')));
+  // reviewWindow keeps the last 12 weeks from today. A fixed month ages out of that window.
+  const many = Array.from({ length: FULL_DETAIL_SESSIONS + 4 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (FULL_DETAIL_SESSIONS + 3 - i));
+    return workout(d.toISOString().slice(0, 10));
+  });
   const p = build(S(many), { handle: 'h1', kind: 'review' });
   const w = p.window.workouts;
+  assert.equal(many.length, 7);
   assert.equal(w.length, many.length);
+  assert.equal(w.filter(x => x.compact).length, many.length - FULL_DETAIL_SESSIONS);
+  assert.equal(w.filter(x => !x.compact).length, FULL_DETAIL_SESSIONS);
   assert.ok(w[0].compact);
   assert.equal(w[0].entries[0].done, '1/1');
   assert.equal(w[0].entries[0].top, '60x8@RIR2');

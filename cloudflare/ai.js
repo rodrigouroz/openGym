@@ -1,8 +1,8 @@
 import { SYSTEM_PROMPT } from '../api/coach/core/system-prompt.js';
 
-import { MODEL, PRICES } from './pricing.js';
+import { MODEL, PRICES, RETIRED_MODEL } from './pricing.js';
 export { MODEL };
-export const MODELS = Object.fromEntries(Object.entries(PRICES).filter(([, p]) => p.outputNano > 0).map(([m, p]) => [m, p.context]));
+export const MODELS = Object.fromEntries(Object.entries(PRICES).filter(([id, p]) => p.outputNano > 0 && id !== RETIRED_MODEL).map(([m, p]) => [m, p.context]));
 export const AI_PROVIDER = { label: 'Workers AI', runtime: 'Workers AI binding', binding: true, defaultModel: MODEL };
 
 // The binding is optional. Never acquire credentials or enable billable inference here.
@@ -17,7 +17,8 @@ export function workersAI(ai, reserve = () => {}) {
     async invoke({ prompt, system, schema, model = MODEL, maxTokens = 4096, timeoutMs = 300000, signal }) {
       const failure = stderr => ({ code: 1, text: '', stderr });
       if (!ai) return failure('Workers AI binding is not configured');
-      if (!MODELS[model || MODEL]) return failure('Unsupported Workers AI model');
+      const selected = model === RETIRED_MODEL ? MODEL : (model || MODEL);
+      if (!MODELS[selected]) return failure('Unsupported Workers AI model');
       const messages = [
         { role: 'system', content: SYSTEM_PROMPT + (system ? '\n\n' + system : '') },
         { role: 'user', content: prompt }
@@ -26,16 +27,22 @@ export function workersAI(ai, reserve = () => {}) {
       // live checks with the polymorphic before/after schema. JSON-object mode
       // avoids that decoder path; the same strict review validator still judges it.
       const review = !!schema?.properties?.changes;
-      const response_format = schema && !review ? { type: 'json_schema', json_schema: schema } : { type: 'json_object' };
+      // Gemma's sync schema requires json_schema.name and nests the schema.
+      // Llama models on this binding take the schema object itself.
+      const response_format = schema && !review
+        ? (selected === MODEL
+          ? { type: 'json_schema', json_schema: { name: 'coach_answer', schema } }
+          : { type: 'json_schema', json_schema: schema })
+        : { type: 'json_object' };
       const output = Math.min(8192, Math.max(1024, maxTokens));
       // UTF-8 bytes conservatively bound byte-BPE input tokens. Include schema and a
       // reserve for chat framing rather than guessing characters per token. Large
       // histories fail before inference; they are never silently clipped.
       const bytes = new TextEncoder().encode(JSON.stringify({ messages, response_format })).length;
-      if (bytes + output + 1024 > MODELS[model || MODEL]) return failure('Coach context exceeds this model’s conservative context budget; reduce the history or use another provider');
+      if (bytes + output + 1024 > MODELS[selected]) return failure('Coach context exceeds this model’s conservative context budget; reduce the history or use another provider');
       if (signal?.aborted) return failure('cancelled');
       let reservation;
-      try { reservation = reserve({ model: model || MODEL, maxOutput: output }); await reserve.flush?.(); }
+      try { reservation = reserve({ model: selected, maxOutput: output }); await reserve.flush?.(); }
       catch { return failure('AI budget exhausted or unavailable. Ask the owner to approve a top-up.'); }
       let timer, onAbort;
       try {
@@ -45,10 +52,10 @@ export function workersAI(ai, reserve = () => {}) {
           signal?.addEventListener('abort', onAbort, { once: true });
         });
         const result = await Promise.race([
-          ai.run(model || MODEL, { messages, response_format, max_tokens: output, temperature: 0, stream: false }), stopped
+          ai.run(selected, { messages, response_format, max_tokens: output, temperature: 0, stream: false }), stopped
         ]);
         reserve.settle?.(reservation, result.usage);
-        const text = typeof result.response === 'string' ? result.response : JSON.stringify(result.response);
+        const text = completionText(result);
         if (!text) return failure('Workers AI returned no response');
         return { code: 0, text, stderr: '' };
       } catch (e) {
@@ -62,4 +69,13 @@ export function workersAI(ai, reserve = () => {}) {
       }
     }
   };
+}
+
+// The binding models return { response }. Gemma's sync schema returns a chat
+// completion, with the answer at choices[0].message.content.
+function completionText(result) {
+  if (typeof result?.response === 'string') return result.response;
+  if (result?.response) return JSON.stringify(result.response);
+  const content = result?.choices?.[0]?.message?.content;
+  return typeof content === 'string' ? content : '';
 }

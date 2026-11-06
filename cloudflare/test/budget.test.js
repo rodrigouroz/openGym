@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createAIBudget } from '../budget.js';
-import { MODEL, PRICE_VALID_UNTIL, PRICES, costMicros } from '../pricing.js';
+import { MODEL, PRICE_VALID_UNTIL, PRICES, RETIRED_MODEL, costMicros } from '../pricing.js';
 function files() {
   const values = new Map();
   return { existsSync: n => values.has(n), readFileSync: n => values.get(n), writeFileSync: (n, v) => values.set(n, v) };
@@ -9,7 +9,7 @@ function files() {
 const request = { model: MODEL, maxOutput: 8192 };
 test('total dollars reserve before requests, never roll over, survive restart and block before overspend', () => {
   const fs = files(); let day = Date.UTC(2026, 9, 12);
-  const make = () => createAIBudget(fs, { COACH_AI_BUDGET_USD: '0.16' }, () => day);
+  const make = () => createAIBudget(fs, { COACH_AI_BUDGET_USD: '0.06' }, () => day);
   const one = make(); one(request); day += 86400000; const two = make(); two(request);
   assert.throws(() => two(request), /exhausted/);
   const s = two.status(); assert.equal(s.attempts, 2); assert.ok(s.reservedMicros <= s.totalMicros);
@@ -17,7 +17,7 @@ test('total dollars reserve before requests, never roll over, survive restart an
 });
 test('settles valid usage once; uncertain, out-of-bounds and corrupt usage never release reservation', () => {
   const fs = files(), budget = createAIBudget(fs, { COACH_AI_BUDGET_USD: '5' }, () => Date.UTC(2026, 9, 12));
-  const a = budget(request), b = budget(request), max = costMicros(MODEL, 80000, 8192);
+  const a = budget(request), b = budget(request), max = costMicros(MODEL, 256000, 8192);
   for (const usage of [undefined, {}, { prompt_tokens: -1, completion_tokens: 2 }, { prompt_tokens: 1, completion_tokens: 9000 }, { prompt_tokens: 1, completion_tokens: 2, total_tokens: 99 }]) budget.settle(a, usage);
   assert.equal(budget.status().reservedMicros, max * 2);
   const usage = { prompt_tokens: 1000, completion_tokens: 100, total_tokens: 1100 };
@@ -35,22 +35,36 @@ test('unconfigured, expired, unknown-model, legacy and corrupted budgets fail cl
   fs.writeFileSync('/data/coach-ai-ledger.json', '{invalid'); assert.throws(() => createAIBudget(fs, env)(request));
 });
 test('rates conservatively cover both displayed token rates and neuron-based billing', () => {
-  assert.ok(PRICES[MODEL].outputNano >= 443756 * 11 / 1000);
+  assert.ok(PRICES[MODEL].inputNano >= 9091 * 11 / 1000);
+  assert.ok(PRICES[MODEL].outputNano >= 27273 * 11 / 1000);
+  assert.ok(PRICES[RETIRED_MODEL].outputNano >= 443756 * 11 / 1000);
   assert.ok(PRICES['@cf/meta/llama-3.3-70b-instruct-fp8-fast'].inputNano >= 26668 * 11 / 1000);
-  assert.equal(costMicros(MODEL, 80000, 8192), 79754);
+  assert.equal(costMicros(MODEL, 256000, 8192), 28322);
+  assert.equal(costMicros(RETIRED_MODEL, 80000, 8192), 79754);
+});
+test('a retired-model receipt still resolves in the ledger', () => {
+  const fs = files();
+  const reserved = costMicros(RETIRED_MODEL, 80000, 8192);
+  fs.writeFileSync('/data/coach-ai-ledger.json', JSON.stringify({
+    version: 1, spentMicros: 0, reservedMicros: reserved, attempts: 1,
+    entries: { old: { model: RETIRED_MODEL, maxInput: 80000, maxOutput: 8192, reserved, at: Date.UTC(2026, 9, 12) } }
+  }));
+  const budget = createAIBudget(fs, { COACH_AI_BUDGET_USD: '5' }, () => Date.UTC(2026, 9, 12));
+  assert.equal(budget.status().blocked, undefined);
+  assert.equal(budget.status().reservedMicros, reserved);
 });
 
 test('concurrent requests cannot oversubscribe; no inference precedes durable flush and failed calls remain reserved', async () => {
   const { workersAI } = await import('../ai.js');
   const fs = files(); let release, calls = 0;
   const gate = new Promise(resolve => { release = resolve; });
-  const budget = createAIBudget(fs, { COACH_AI_BUDGET_USD: '0.08' }, () => Date.UTC(2026, 9, 12), () => gate);
+  const budget = createAIBudget(fs, { COACH_AI_BUDGET_USD: '0.03' }, () => Date.UTC(2026, 9, 12), () => gate);
   const adapter = workersAI({ async run() { calls++; throw new Error('ambiguous provider failure'); } }, budget);
   const opts = { prompt: 'synthetic', maxTokens: 8192, model: MODEL };
   const first = adapter.invoke(opts), second = adapter.invoke(opts);
   assert.equal((await second).code, 1); assert.equal(calls, 0);
   assert.equal(budget.status().attempts, 1); release();
   assert.equal((await first).code, 1); assert.equal(calls, 1);
-  const restored = createAIBudget(fs, { COACH_AI_BUDGET_USD: '0.08' }, () => Date.UTC(2026, 9, 13));
-  assert.equal(restored.status().reservedMicros, 79754); assert.throws(() => restored(request), /exhausted/);
+  const restored = createAIBudget(fs, { COACH_AI_BUDGET_USD: '0.03' }, () => Date.UTC(2026, 9, 13));
+  assert.equal(restored.status().reservedMicros, 28322); assert.throws(() => restored(request), /exhausted/);
 });

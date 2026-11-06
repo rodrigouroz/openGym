@@ -7,15 +7,15 @@ import { DatabaseSync } from 'node:sqlite';
 import { execFileSync } from 'node:child_process';
 import { createStorage } from '../storage.js';
 import { createCoach } from '../coach.js';
-import { MODEL, costMicros } from '../pricing.js';
+import { MODEL, PRICES, PRICE_CHECKED, costMicros } from '../pricing.js';
 import { sampleState } from '../../api/test/helpers.mjs';
 
 const mode = process.argv[2] || '--plan';
 if (!['--plan', '--fixture'].includes(mode) || process.argv.length > 3) throw new Error('Use --plan or --fixture; live validation uses the protected deployment and its shared budget');
-const CALLS = 8, MAX_INPUT = 80000, MAX_OUTPUT = 8192;
+const CALLS = 8, MAX_INPUT = PRICES[MODEL].context, MAX_OUTPUT = 8192;
 const ceiling = CALLS * costMicros(MODEL, MAX_INPUT, MAX_OUTPUT) / 1e6;
 console.log(JSON.stringify({ model: MODEL, totalAttempts: CALLS, maxInputTokens: MAX_INPUT, maxOutputTokens: MAX_OUTPUT,
-  modelCostCeilingUSD: ceiling, pricingChecked: '2026-10-12', recurringAllowance: false,
+  modelCostCeilingUSD: ceiling, pricingChecked: PRICE_CHECKED, recurringAllowance: false,
   note: 'Recheck current model prices before executing. No production profile data is read. Workers/storage charges are separate.' }));
 if (mode === '--plan') process.exit(0);
 const root = fileURLToPath(new URL('../.wrangler/', import.meta.url));
