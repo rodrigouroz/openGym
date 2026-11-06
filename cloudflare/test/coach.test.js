@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { createStorage } from '../storage.js';
 import { createCoach } from '../coach.js';
 import { workersAI, MODEL } from '../ai.js';
+import { RETIRED_MODEL, costMicros } from '../pricing.js';
 import { reviewState as sampleState } from '../../api/test/helpers.mjs';
 
 function setup(t, mode = '') {
@@ -26,7 +27,7 @@ function setup(t, mode = '') {
   } };
   const make = () => createCoach({ fs, env: { DATA_DIR: '/data', AI: ai, COACH_AI_BUDGET_USD: '5' }, defer() {} });
   let coach = make();
-  coach.cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: 4096, models: { 'workers-ai': '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b' } });
+  coach.cfgStore.save({ enabled: true, provider: 'workers-ai', maxOutputTokens: 4096, models: { 'workers-ai': RETIRED_MODEL } });
   const write = (id, state = sampleState()) => fs.writeFileSync('/data/state-' + id + '.json', JSON.stringify(state));
   return { fs, calls, ai, make, coach, write };
 }
@@ -55,8 +56,10 @@ test('Workers AI uses native schema shape; malformed answer repairs once; unknow
     h.coach.jobs.enqueue('a', { kind: 'review' });
     await h.coach.jobs.runQueued();
     assert.equal(h.calls.length, 2);
-    assert.equal(h.calls[0].model, '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b');
+    assert.equal(h.coach.cfgStore.load().models['workers-ai'], RETIRED_MODEL);
+    assert.equal(h.calls[0].model, MODEL);
     assert.equal(h.calls[0].input.stream, false);
+    assert.equal(h.calls[0].input.temperature, 0);
     assert.deepEqual(h.calls[0].input.response_format, { type: 'json_object' });
     assert.equal(h.coach.jobs.status('a').last.outcome, mode === 'invalid-then-valid' ? 'ready' : 'failed');
     if (mode === 'unknown-exercise') assert.equal(h.coach.jobs.status('a').pending, null);
@@ -67,16 +70,16 @@ test('create, refine and debrief use the existing validation pipeline', async t 
   const h = setup(t); h.write('a');
   h.coach.jobs.enqueue('a', { kind: 'create' }); await h.coach.jobs.runQueued();
   assert.equal(h.coach.jobs.status('a').last.outcome, 'ready', JSON.stringify(h.coach.cfgStore.load().log));
-  assert.equal(h.calls[0].input.response_format.json_schema.type, 'object');
-  assert.equal(h.calls[0].input.response_format.json_schema.schema, undefined);
+  assert.equal(h.calls[0].input.response_format.json_schema.name, 'coach_answer');
+  assert.equal(h.calls[0].input.response_format.json_schema.schema.type, 'object');
   h.coach.jobs.enqueue('a', { kind: 'create', refine: 'Use the same equipment' }); await h.coach.jobs.runQueued();
   assert.equal(h.coach.jobs.status('a').pending.iteration, 2);
   h.coach.jobs.resolvePending('a', { accepted: ['r1'] });
   assert.equal(h.coach.jobs.status('a').pending, null);
   h.coach.jobs.enqueue('a', { kind: 'debrief', workoutId: 'w1' }); await h.coach.jobs.runQueued();
   assert.equal(h.coach.jobs.status('a').last.outcome, 'ready', JSON.stringify(h.coach.cfgStore.load().log));
-  assert.equal(h.calls[0].input.response_format.json_schema.type, 'object');
-  assert.equal(h.calls[0].input.response_format.json_schema.schema, undefined);
+  assert.equal(h.calls[0].input.response_format.json_schema.name, 'coach_answer');
+  assert.equal(h.calls[0].input.response_format.json_schema.schema.type, 'object');
 });
 
 test('consent revoked while queued prevents inference; running interruption is recorded without replay', async t => {
@@ -109,7 +112,7 @@ test('forget during inference cancels publication, and preserves daily budget', 
 test('context budget and pre-cancelled calls never invoke a model; errors do not echo payloads', async () => {
   let calls = 0;
   const adapter = workersAI({ async run() { calls++; throw new Error('private prompt content'); } });
-  const oversized = await adapter.invoke({ prompt: 'x'.repeat(80000) });
+  const oversized = await adapter.invoke({ prompt: 'x'.repeat(300000) });
   assert.equal(oversized.code, 1); assert.equal(calls, 0);
   const ctl = new AbortController(); ctl.abort();
   await adapter.invoke({ prompt: 'synthetic', signal: ctl.signal }); assert.equal(calls, 0);
@@ -117,6 +120,59 @@ test('context budget and pre-cancelled calls never invoke a model; errors do not
   assert.equal(r.code, 1); assert.ok(!r.stderr.includes('private prompt'));
 });
 
+
+test('a retired Workers AI id calls Gemma, chat content validates, and Llama keeps its schema', async t => {
+  const h = setup(t);
+  h.ai.run = async (model, input) => {
+    h.calls.push({ model, input });
+    const text = execFileSync(process.execPath, [new URL('../../api/coach/fixture-cli.mjs', import.meta.url).pathname], {
+      input: input.messages.map(m => m.content).join('\n\n'), encoding: 'utf8', env: { ...process.env, FIXTURE_MODE: '' }
+    });
+    return { choices: [{ message: { role: 'assistant', content: text } }], usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 } };
+  };
+  h.write('a');
+  h.coach.jobs.enqueue('a', { kind: 'review' });
+  await h.coach.jobs.runQueued();
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].model, MODEL);
+  assert.equal(h.coach.cfgStore.load().models['workers-ai'], RETIRED_MODEL);
+  assert.equal(h.coach.jobs.status('a').last.outcome, 'ready');
+  assert.equal(h.coach.budget.status().spentMicros, costMicros(MODEL, 12, 8));
+  assert.equal(h.coach.budget.status().reservedMicros, 0);
+  h.coach.jobs.resolvePending('a', { accepted: [] });
+  const listed = await workersAI(h.ai).check();
+  assert.ok(listed.models.includes(MODEL));
+  assert.equal(listed.models.includes(RETIRED_MODEL), false);
+  const coach = createCoach({ fs: h.fs, env: { DATA_DIR: '/data', AI: h.ai, COACH_AI_BUDGET_USD: '5', COACH_AI_MODEL: RETIRED_MODEL }, defer() {} });
+  coach.cfgStore.save({ models: {} });
+  assert.equal(coach.cfgStore.modelFor(), MODEL);
+  coach.jobs.enqueue('a', { kind: 'review' });
+  await coach.jobs.runQueued();
+  assert.equal(h.calls.at(-1).model, MODEL);
+  assert.equal(coach.cfgStore.load().models['workers-ai'], undefined);
+  const seen = [];
+  const llama = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+  const adapter = workersAI({ async run(model, input) { seen.push({ model, input }); return { response: '{"coach_contract":1}' }; } });
+  const schema = { type: 'object', properties: { days: { type: 'array' } } };
+  const legacy = await adapter.invoke({ prompt: 'synthetic', model: llama, schema });
+  assert.equal(legacy.code, 0);
+  assert.equal(legacy.text, '{"coach_contract":1}');
+  assert.equal(seen[0].model, llama);
+  assert.equal(seen[0].input.response_format.json_schema.type, 'object');
+  assert.equal(seen[0].input.response_format.json_schema.schema, undefined);
+  const accepted = await adapter.invoke({ prompt: 'x'.repeat(100000), model: MODEL, schema });
+  assert.equal(accepted.code, 0);
+  assert.equal(seen.at(-1).model, MODEL);
+  assert.equal(seen.at(-1).input.response_format.json_schema.schema.type, 'object');
+  assert.equal(seen.at(-1).input.max_tokens >= 1024, true);
+  const blocked = await adapter.invoke({ prompt: 'x'.repeat(300000), model: MODEL, schema });
+  assert.equal(blocked.code, 1);
+  assert.equal(seen.length, 2);
+  const review = await adapter.invoke({ prompt: 'synthetic', model: RETIRED_MODEL, schema: { type: 'object', properties: { changes: { type: 'array' } } } });
+  assert.equal(review.code, 0);
+  assert.equal(seen.at(-1).model, MODEL);
+  assert.deepEqual(seen.at(-1).input.response_format, { type: 'json_object' });
+});
 
 test('inference allowance persists across restart and forget, and is disabled by default', async t => {
   const h = setup(t); h.write('a');

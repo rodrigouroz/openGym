@@ -68,18 +68,25 @@ Coach configuration exists; per-profile consent remains mandatory.
 
 In Admin → Coach, enable Coach and select **Workers AI**, instance authentication mode,
 and a model. The binding needs no API key. The adapter supports Llama 3.3 70B FP8 fast
-(24k context), Llama 4 Scout (131k), and the default DeepSeek R1 Distill Qwen 32B (80k).
+(24k context), Llama 4 Scout (131k), and the default Gemma 4 26B A4B (256k,
+`@cf/google/gemma-4-26b-a4b-it`).
 `COACH_AI_MODEL` explicitly selects a deployment default when no admin model is stored; there
-is no automatic fallback. In live synthetic testing, DeepSeek exceeded the five-minute job
-timeout, so validate your chosen model before relying on it. It uses native JSON schema mode for plans and debriefs, and JSON-object mode for reviews
+is no automatic fallback between those models. A saved selection or `COACH_AI_MODEL` value of
+`@cf/deepseek-ai/deepseek-r1-distill-qwen-32b` is called as that Gemma model. Cloudflare
+retires the DeepSeek id on November 20, 2026. The notice first said November 15, 2026, then
+moved the date. The saved id is left on disk. Earlier live checks of that DeepSeek model
+exceeded the five-minute job timeout, so validate Gemma with synthetic data before relying
+on it. Plans and debriefs for Gemma use its chat-completion JSON schema
+(`json_schema.name` plus `json_schema.schema`). Llama models keep the older binding shape,
+where `json_schema` is the schema object. Reviews use JSON-object mode for every model
 (the polymorphic review schema produced invalid/truncated answers in live decoder tests),
 then the existing strict response validator and at most one repair. Model quality and live
 provider behavior should be checked with synthetic data before sharing workout history.
 The normal consent flow remains mandatory for each profile.
 
 Input bytes (including schema) conservatively bound tokens, with a framing/output reserve.
-Large histories can exceed a model's budget and fail before any inference; they are never
-silently truncated or sent to a different model. Output is capped at 8192 tokens per attempt.
+Large histories can exceed a model's budget and fail before any inference. They are never
+silently truncated, and oversized input is not moved to another model. Output is capped at 8192 tokens per attempt.
 The smaller model may reject complex create/repair prompts; choose the larger context model
 or another HTTP provider explicitly. A binding call may continue after local cancellation or
 timeout, so cancellation cannot guarantee a billing refund.
@@ -106,8 +113,8 @@ set a new `AI_VALIDATION_RUN` slug for a fresh isolated evaluation after fixing 
 Each run has its own eight-attempt guard, but all runs share the same lifetime dollar ledger.
 Changing the slug is never automatic and must stay within the approved testing allowance.
 
-At the conservatively rounded rates checked on 2026-10-12, eight full-context/output attempts
-reserve at most **$0.638032**. These reservations consume the installation's approved total.
+At the conservatively rounded rates checked on 2026-11-06, eight full-context/output attempts
+on the Gemma default reserve at most **$0.226576**. These reservations consume the installation's approved total.
 A valid token receipt can reduce that estimate; uncertainty never releases it. Existing
 Workers and storage costs are separate. `/api/cloudflare/budget` exposes only budget metadata
 to the configured, authenticated owner and can support an owner-authorized notification check.
